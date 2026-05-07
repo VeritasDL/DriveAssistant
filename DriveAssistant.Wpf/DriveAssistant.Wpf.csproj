@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\FATX\FATX.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\RawImage.cs" Link="DiskTypes\RawImage.cs" />
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\CompressedImage.cs" Link="DiskTypes\CompressedImage.cs" />
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\ImgcDecoder.cs" Link="DiskTypes\ImgcDecoder.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Utilities\BuildInfo.cs" Link="Utilities\BuildInfo.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Utilities\CustomSignatureLoader.cs" Link="Utilities\CustomSignatureLoader.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Database\DatabaseFile.cs" Link="Database\DatabaseFile.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Database\FileDatabase.cs" Link="Database\FileDatabase.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Analyzers\IntegrityAnalyzer.cs" Link="Analyzers\IntegrityAnalyzer.cs" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>..\DriveAssistant.Shared\appicon.ico</ApplicationIcon>
+    <AssemblyName>Drive Assistant</AssemblyName>
+    <Product>Drive Assistant</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\DriveAssistant.Shared\appicon.ico" Link="appicon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="tools\ps-hdd\pshdd-bridge.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tools\ps-hdd\pshdd-bridge.dll</Link>
+    </Content>
+    <Content Include="tools\ps-hdd\mount-tool.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tools\ps-hdd\mount-tool.exe</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiscUtils.Ntfs" Version="0.16.13" />
+  </ItemGroup>
+
+</Project>

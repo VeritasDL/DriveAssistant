@@ -1,24 +1,25 @@
-﻿using FATX.FileSystem;
+using FATX.FileSystem;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace FATX
 {
     public class DriveReader : EndianReader
     {
-        private List<Volume> _partitions = new List<Volume>();
+        private readonly List<Volume> _partitions = new List<Volume>();
+
         public DriveReader(Stream stream)
             : base(stream)
         {
         }
 
-        public void Initialize()
+        public void Initialize(bool exhaustiveRawPartitionSearch = true)
         {
             Seek(0);
 
-            // Definitely need to refactor all of this..
-            // Check for memory unit image
+            // Check for memory unit image.
             if (ReadUInt64() == 0x534F44534D9058EB)
             {
                 Console.WriteLine("Mounting Xbox 360 Memory Unit..");
@@ -32,144 +33,377 @@ namespace FATX
                 return;
             }
 
-            // Might move to a new class
-            // Check for Original XBOX partition.
-            Seek(0xABE80000);
-            if (ReadUInt32() == 0x58544146)
+            // Check for Original Xbox fixed-offset FATX partition map.
+            if (HasOriginalXboxVolumeSignatureAt(0xABE80000) ||
+                HasOriginalXboxVolumeSignatureAt(0x8CA80000))
             {
                 Console.WriteLine("Mounting Xbox Original HDD..");
 
-                AddPartition("Partition1", 0xABE80000, 0x1312D6000);    // DATA
-                AddPartition("Partition2", 0x8CA80000, 0x1f400000);     // SHELL
-                AddPartition("Partition3", 0x5DC80000, 0x2ee00000);     // CACHE
-                AddPartition("Partition4", 0x2EE80000, 0x2ee00000);     // CACHE
-                AddPartition("Partition5", 0x80000, 0x2ee00000);        // CACHE
+                AddOriginalXboxPartitionIfValid("E - Data", 0xABE80000, 0x1312D6000);
+                AddOriginalXboxPartitionIfValid("C - System", 0x8CA80000, 0x1f400000);
+                AddOriginalXboxPartitionIfValid("Z - Game Cache", 0x5DC80000, 0x2ee00000);
+                AddOriginalXboxPartitionIfValid("Y - Game Cache", 0x2EE80000, 0x2ee00000);
+                AddOriginalXboxPartitionIfValid("X - Game Cache", 0x80000, 0x2ee00000);
+                AddOriginalXboxPartitionIfValid("F - Extended", 0x1DD156000L, Math.Min(Length, 0x1FFFFFFE00L) - 0x1DD156000L);
+                AddOriginalXboxPartitionIfValid("G - Extended", 0x1FFFFFFE00L, Length - 0x1FFFFFFE00L);
                 return;
             }
 
-            // Check for Original XBOX DVT3 (Prototype Development Kit) partition.
+            // Check for Original XBOX DVT3 (Prototype Development Kit) partitions.
             Seek(0x80000);
-            if (ReadUInt32() == 0x58544146)
+            if (ReadUInt32() == Volume.VolumeSignature)
             {
                 Console.WriteLine("Mounting Xbox DVT3 HDD (v2)..");
 
-                AddPartition("Partition1", 0x80000, 0x1312D6000);        // DATA
-                AddPartition("Partition2", 0x131356000, 0x1f400000);     // SHELL
-                AddPartition("Partition3", 0x150756000, 0x2ee00000);     // CACHE
-                AddPartition("Partition4", 0x17F556000, 0x2ee00000);     // CACHE
-                AddPartition("Partition5", 0x1AE356000, 0x2ee00000);     // CACHE
+                AddPartition("Partition1", 0x80000, 0x1312D6000);
+                AddPartition("Partition2", 0x131356000, 0x1f400000);
+                AddPartition("Partition3", 0x150756000, 0x2ee00000);
+                AddPartition("Partition4", 0x17F556000, 0x2ee00000);
+                AddPartition("Partition5", 0x1AE356000, 0x2ee00000);
                 return;
             }
 
             Seek(0x80004);
-            if (ReadUInt32() == 0x58544146)
+            if (ReadUInt32() == Volume.VolumeSignature)
             {
                 Console.WriteLine("Mounting Xbox DVT3 HDD (v1)..");
 
-                AddPartition("Partition1", 0x80000, 0x1312D6000, true);        // DATA
-                AddPartition("Partition2", 0x131356000, 0x1f400000, true);     // SHELL
-                AddPartition("Partition3", 0x150756000, 0x2ee00000, true);     // CACHE
-                AddPartition("Partition4", 0x17F556000, 0x2ee00000, true);     // CACHE
-                AddPartition("Partition5", 0x1AE356000, 0x2ee00000, true);     // CACHE
+                AddPartition("Partition1", 0x80000, 0x1312D6000, true);
+                AddPartition("Partition2", 0x131356000, 0x1f400000, true);
+                AddPartition("Partition3", 0x150756000, 0x2ee00000, true);
+                AddPartition("Partition4", 0x17F556000, 0x2ee00000, true);
+                AddPartition("Partition5", 0x1AE356000, 0x2ee00000, true);
                 return;
             }
 
-            // Check for XBOX 360 partitions.
+            // Check for Xbox 360 partitions.
             Seek(0);
             ByteOrder = ByteOrder.Big;
             if (ReadUInt32() == 0x20000)
             {
                 Console.WriteLine("Mounting Xbox 360 Dev HDD..");
-
-                // This is a dev formatted HDD.
-                ReadUInt16();  // Kernel version
-                ReadUInt16();
-
-                // TODO: reading from raw devices requires sector aligned reads.
-                Seek(8);
-                // Partition1
-                long dataOffset = (long)ReadUInt32() * Constants.SectorSize;
-                long dataLength = (long)ReadUInt32() * Constants.SectorSize;
-                // SystemPartition
-                long shellOffset = (long)ReadUInt32() * Constants.SectorSize;
-                long shellLength = (long)ReadUInt32() * Constants.SectorSize;
-                // Unused?
-                ReadUInt32();
-                ReadUInt32();
-                // DumpPartition
-                ReadUInt32();
-                ReadUInt32();
-                // PixDump
-                ReadUInt32();
-                ReadUInt32();
-                // Unused?
-                ReadUInt32();
-                ReadUInt32();
-                // Unused?
-                ReadUInt32();
-                ReadUInt32();
-                // AltFlash
-                ReadUInt32();
-                ReadUInt32();
-                // Cache0
-                long cache0Offset = (long)ReadUInt32() * Constants.SectorSize;
-                long cache0Length = (long)ReadUInt32() * Constants.SectorSize;
-                // Cache1
-                long cache1Offset = (long)ReadUInt32() * Constants.SectorSize;
-                long cache1Length = (long)ReadUInt32() * Constants.SectorSize;
-
-                AddPartition("Partition1", dataOffset, dataLength);
-                AddPartition("SystemPartition", shellOffset, shellLength);
-                // TODO: Add support for these
-                //AddPartition("Cache0", cache0Offset, cache0Length);
-                //AddPartition("Cache1", cache1Offset, cache1Length);
+                AddXbox360DevkitHeaderPartitions(exhaustiveRawPartitionSearch);
             }
             else
             {
                 Console.WriteLine("Mounting Xbox 360 Retail HDD..");
 
-                //Seek(8);
-                //var test = ReadUInt32();
+                bool looksLikeRetail = HasVolumeSignatureAt(0x130eb0000) || HasVolumeSignatureAt(0x120eb0000) ||
+                                       HasVolumeSignatureAt(0x80000);
 
-                // This is a retail formatted HDD.
-                /// Partition0 0, END
-                /// Cache0 0x80000, 0x80000000
-                /// Cache1 0x80080000, 0x80000000
-                /// DumpPartition 0x100080000, 0x20E30000
-                ///   SystemURLCachePartition 0, 0x6000000
-                ///   TitleURLCachePartition 0x6000000, 0x2000000
-                ///   SystemExtPartition 0x0C000000, 0x0CE30000
-                ///   SystemAuxPartition 0x18e30000, 0x08000000
-                /// SystemPartition 0x120EB0000, 0x10000000
-                /// Partition1 0x130EB0000, END
+                if (looksLikeRetail)
+                {
+                    AddPartitionIfValid("Partition1", 0x130eb0000, Length - 0x130eb0000);
+                    AddPartitionIfValid("SystemPartition", 0x120eb0000, 0x10000000);
+                    AddPartitionIfValid("Cache0", 0x80000, 0x80000000);
+                    AddPartitionIfValid("Cache1", 0x80080000, 0x80000000);
 
-                AddPartition("Partition1", 0x130eb0000, this.Length - 0x130eb0000);
-                AddPartition("SystemPartition", 0x120eb0000, 0x10000000);
-
-                // 0x118EB0000 - 0x100080000
-                // TODO: Add support for these
-                //AddPartition("Cache0", 0x80000, 0x80000000);
-                //AddPartition("Cache1", 0x80080000, 0x80000000);
-
-                const long dumpPartitionOffset = 0x100080000;
-                // TODO: Add support for these
-                //AddPartition("DumpPartition", 0x100080000, 0x20E30000);
-                //AddPartition("SystemURLCachePartition", dumpPartitionOffset + 0, 0x6000000);
-                //AddPartition("TitleURLCachePartition", dumpPartitionOffset + 0x6000000, 0x2000000);
-                //AddPartition("SystemExtPartition", dumpPartitionOffset + 0x0C000000, 0xCE30000);
-                AddPartition("SystemAuxPartition", dumpPartitionOffset + 0x18e30000, 0x8000000);
+                    const long dumpPartitionOffset = 0x100080000;
+                    AddPartitionIfValid("DumpPartition", 0x100080000, 0x20E30000);
+                    AddPartitionIfValid("SystemURLCachePartition", dumpPartitionOffset + 0, 0x6000000);
+                    AddPartitionIfValid("TitleURLCachePartition", dumpPartitionOffset + 0x6000000, 0x2000000);
+                    AddPartitionIfValid("SystemExtPartition", dumpPartitionOffset + 0x0C000000, 0xCE30000);
+                    AddPartitionIfValid("SystemAuxPartition", dumpPartitionOffset + 0x18e30000, 0x8000000);
+                }
             }
+
+            if (_partitions.Count == 0)
+            {
+                Console.WriteLine("No known partition map detected. Attempting raw partition discovery.");
+
+                if (HasVolumeSignatureAt(0))
+                {
+                    AddPartition("RawPartition", 0, Length);
+                    return;
+                }
+
+                if (HasVolumeSignatureAt(0x4))
+                {
+                    AddPartition("RawPartitionLegacy", 0, Length, legacy: true);
+                    return;
+                }
+
+                if (exhaustiveRawPartitionSearch)
+                {
+                    SearchForAdditionalPartitions();
+                }
+
+                if (_partitions.Count == 0)
+                {
+                    // Final fallback for non-standard images to allow manual partition operations.
+                    AddPartition("RawPartition", 0, Length);
+                }
+            }
+        }
+
+        private void AddPartitionIfValid(string name, long offset, long length)
+        {
+            if (length <= 0)
+            {
+                return;
+            }
+
+            bool hasStandardHeader = HasVolumeSignatureAt(offset);
+            bool hasLegacyHeader = HasVolumeSignatureAt(offset + 0x4);
+            if (!hasStandardHeader && !hasLegacyHeader)
+            {
+                return;
+            }
+
+            AddPartition(name, offset, length, legacy: hasLegacyHeader && !hasStandardHeader);
+        }
+
+        private void AddXbox360DevkitHeaderPartitions(bool exhaustiveRawPartitionSearch)
+        {
+            var knownHeaderNames = new Dictionary<int, string>
+            {
+                [0] = "Partition1",
+                [1] = "SystemPartition",
+                [3] = "DumpPartition",
+                [4] = "PixDumpPartition",
+                [7] = "AltFlash",
+                [8] = "Cache0",
+                [9] = "Cache1"
+            };
+
+            var knownOffsets = new Dictionary<long, string>
+            {
+                [0x28C080000] = "SystemExtPartition",
+                [0x298EB0000] = "SystemAuxPartition",
+                [0x2C0EB0000] = "BackCompatPartition",
+                [0x2D0EB0000] = "ContentPartition",
+                [0x3934B2E000] = "AltFlash"
+            };
+
+            var entries = new List<(int Index, long Offset, long Length)>();
+            Seek(8);
+            for (var index = 0; index < 10; index++)
+            {
+                var offset = (long)ReadUInt32() * Constants.SectorSize;
+                var length = (long)ReadUInt32() * Constants.SectorSize;
+                if (offset > 0 && offset < Length)
+                {
+                    entries.Add((index, offset, length));
+                }
+            }
+
+            entries.Sort((left, right) => left.Offset.CompareTo(right.Offset));
+            for (var index = 0; index < entries.Count; index++)
+            {
+                var entry = entries[index];
+                if (entry.Length <= 0)
+                {
+                    var nextOffset = index + 1 < entries.Count ? entries[index + 1].Offset : Length;
+                    entry = (entry.Index, entry.Offset, nextOffset - entry.Offset);
+                }
+
+                var name = knownHeaderNames.TryGetValue(entry.Index, out var headerName)
+                    ? headerName
+                    : knownOffsets.TryGetValue(entry.Offset, out var offsetName)
+                        ? offsetName
+                        : $"HeaderPartition{entry.Index}";
+                AddPartitionIfValid(name, entry.Offset, entry.Length);
+            }
+
+            foreach (var knownOffset in knownOffsets.OrderBy(pair => pair.Key))
+            {
+                if (_partitions.Any(partition => partition.Offset == knownOffset.Key) || knownOffset.Key >= Length)
+                {
+                    continue;
+                }
+
+                var nextOffset = knownOffsets.Keys
+                    .Where(offset => offset > knownOffset.Key && offset < Length)
+                    .DefaultIfEmpty(Length)
+                    .Min();
+                AddPartitionIfValid(knownOffset.Value, knownOffset.Key, nextOffset - knownOffset.Key);
+            }
+
+            if (exhaustiveRawPartitionSearch)
+            {
+                SearchForAdditionalPartitions();
+            }
+        }
+
+        private bool HasVolumeSignatureAt(long offset)
+        {
+            if (offset < 0 || offset + 4 > Length)
+            {
+                return false;
+            }
+
+            var originalOrder = ByteOrder;
+            try
+            {
+                ByteOrder = ByteOrder.Big;
+                Seek(offset);
+                return ReadUInt32() == Volume.VolumeSignature;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                ByteOrder = originalOrder;
+            }
+        }
+
+        private bool HasOriginalXboxVolumeSignatureAt(long offset)
+        {
+            if (offset < 0 || offset + 4 > Length)
+            {
+                return false;
+            }
+
+            var originalOrder = ByteOrder;
+            try
+            {
+                ByteOrder = ByteOrder.Little;
+                Seek(offset);
+                return ReadUInt32() == Volume.VolumeSignature;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                ByteOrder = originalOrder;
+            }
+        }
+
+        private void AddOriginalXboxPartitionIfValid(string name, long offset, long length)
+        {
+            if (length <= 0 || !HasOriginalXboxVolumeSignatureAt(offset))
+            {
+                return;
+            }
+
+            AddPartition(name, offset, length);
         }
 
         public void AddPartition(string name, long offset, long length, bool legacy = false)
         {
+            if (length <= 0 || offset < 0 || offset >= Length)
+            {
+                return;
+            }
+
+            if (_partitions.Any(p => p.Offset == offset))
+            {
+                return;
+            }
+
+            if (offset + length > Length)
+            {
+                length = Length - offset;
+            }
+
             Volume partition = new Volume(this, name, offset, length, legacy);
             _partitions.Add(partition);
+        }
+
+        public int SearchForAdditionalPartitions(long scanStride = Constants.SectorSize)
+        {
+            if (scanStride < Constants.SectorSize)
+            {
+                scanStride = Constants.SectorSize;
+            }
+
+            var existingOffsets = new HashSet<long>(_partitions.Select(p => p.Offset));
+            var added = 0;
+            var maxOffset = Math.Max(0, Length - Constants.SectorSize);
+
+            var originalOrder = ByteOrder;
+            ByteOrder = ByteOrder.Big;
+
+            for (long offset = 0; offset <= maxOffset; offset += scanStride)
+            {
+                if (existingOffsets.Contains(offset))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Seek(offset);
+                    if (ReadUInt32() != Volume.VolumeSignature)
+                    {
+                        continue;
+                    }
+
+                    var serial = ReadUInt32();
+                    var sectorsPerCluster = ReadUInt32();
+                    var rootCluster = ReadUInt32();
+
+                    if (sectorsPerCluster == 0 || sectorsPerCluster > 0x2000 || rootCluster == 0)
+                    {
+                        continue;
+                    }
+
+                    long candidateLength = EstimatePartitionLength(offset, existingOffsets);
+                    if (candidateLength <= Constants.PageSize)
+                    {
+                        continue;
+                    }
+
+                    AddPartition($"Recovered_{offset:X}", offset, candidateLength);
+                    existingOffsets.Add(offset);
+                    added++;
+
+                    Console.WriteLine($"Discovered candidate FATX partition at 0x{offset:X} (len=0x{candidateLength:X}, spc={sectorsPerCluster}, root={rootCluster}, serial=0x{serial:X8})");
+                }
+                catch
+                {
+                    // Keep scanning.
+                }
+            }
+
+            ByteOrder = originalOrder;
+            return added;
+        }
+
+        private long EstimatePartitionLength(long offset, HashSet<long> existingOffsets)
+        {
+            long nextKnownOffset = Length;
+
+            foreach (var existing in existingOffsets)
+            {
+                if (existing > offset && existing < nextKnownOffset)
+                {
+                    nextKnownOffset = existing;
+                }
+            }
+
+            var length = nextKnownOffset - offset;
+            if (length <= 0)
+            {
+                return 0;
+            }
+
+            return length;
         }
 
         public Volume GetPartition(int index)
         {
             return _partitions[index];
+        }
+
+        public bool RemovePartitionAt(int index)
+        {
+            if (index < 0 || index >= _partitions.Count)
+            {
+                return false;
+            }
+
+            _partitions.RemoveAt(index);
+            return true;
+        }
+
+        public void ClearPartitions()
+        {
+            _partitions.Clear();
         }
 
         public List<Volume> Partitions => _partitions;

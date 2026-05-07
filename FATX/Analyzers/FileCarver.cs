@@ -1,4 +1,4 @@
-﻿using FATX.Analyzers.Signatures;
+using FATX.Analyzers.Signatures;
 using FATX.Analyzers.Signatures.Blank;
 using FATX.FileSystem;
 using System;
@@ -24,11 +24,15 @@ namespace FATX.Analyzers
         private readonly FileCarverInterval _interval;
         private readonly long _length;
         private List<FileSignature> _carvedFiles;
+        private readonly List<CustomSignatureDefinition> _customSignatures = new List<CustomSignatureDefinition>();
+
+        public List<long> BadOffsets { get; } = new List<long>();
+        public List<string> Errors { get; } = new List<string>();
 
         public FileCarver(Volume volume)
         {
             _volume = volume;
-            _interval = FileCarverInterval.Cluster;
+            _interval = FileCarverInterval.Sector;
             _length = volume.Length;
         }
 
@@ -44,21 +48,41 @@ namespace FATX.Analyzers
             _length = length;
         }
 
+        public void SetCustomSignatures(IEnumerable<CustomSignatureDefinition> definitions)
+        {
+            _customSignatures.Clear();
+            if (definitions == null)
+            {
+                return;
+            }
+
+            foreach (var definition in definitions)
+            {
+                try
+                {
+                    _ = definition.GetHeaderBytes();
+                    _customSignatures.Add(definition);
+                }
+                catch (Exception ex)
+                {
+                    Errors.Add($"Invalid custom signature '{definition?.Name}': {ex.Message}");
+                }
+            }
+        }
+
         public void LoadFromDatabase(JsonElement fileCarverList)
         {
             _carvedFiles = new List<FileSignature>();
 
             foreach (var file in fileCarverList.EnumerateArray())
             {
-                JsonElement offsetElement;
-                if (!file.TryGetProperty("Offset", out offsetElement))
+                if (!file.TryGetProperty("Offset", out var offsetElement))
                 {
                     Console.WriteLine("Failed to load signature from database: Missing offset field");
                     continue;
                 }
 
                 var fileSignature = new BlankSignature(_volume, offsetElement.GetInt64());
-
                 if (file.TryGetProperty("Name", out var nameElement))
                 {
                     fileSignature.FileName = nameElement.GetString();
@@ -73,81 +97,138 @@ namespace FATX.Analyzers
             }
         }
 
-        public List<FileSignature> GetCarvedFiles()
-        {
-            return _carvedFiles;
-        }
+        public List<FileSignature> GetCarvedFiles() => _carvedFiles;
 
-        public Volume GetVolume()
+        public Volume GetVolume() => _volume;
+
+        public bool AddManualCarvedFile(string name, long startOffset, long endOffset)
         {
-            return _volume;
+            if (startOffset < 0 || endOffset < startOffset || endOffset >= _volume.FileAreaLength)
+            {
+                return false;
+            }
+
+            if (_carvedFiles == null)
+            {
+                _carvedFiles = new List<FileSignature>();
+            }
+
+            var signature = new BlankSignature(_volume, startOffset)
+            {
+                FileName = string.IsNullOrWhiteSpace(name) ? $"manual_{startOffset:X}" : name,
+                FileSize = (endOffset - startOffset) + 1
+            };
+
+            _carvedFiles.Add(signature);
+            return true;
         }
 
         public List<FileSignature> Analyze(CancellationToken cancellationToken, IProgress<int> progress)
         {
-            var allSignatures = from assembly in AppDomain.CurrentDomain.GetAssemblies()
-                                from type in assembly.GetTypes()
-                                where type.Namespace == "FATX.Analyzers.Signatures"
-                                where type.IsSubclassOf(typeof(FileSignature))
-                                select type;
+            var signatureTypes = (
+                from assembly in AppDomain.CurrentDomain.GetAssemblies()
+                from type in assembly.GetTypes()
+                where type.Namespace == "FATX.Analyzers.Signatures"
+                where type.IsSubclassOf(typeof(FileSignature))
+                where !type.IsAbstract
+                where type != typeof(BlankSignature)
+                where type != typeof(TextSignature)
+                where type.GetConstructor(new[] { typeof(Volume), typeof(long) }) != null
+                select type).ToList();
 
             _carvedFiles = new List<FileSignature>();
+            BadOffsets.Clear();
+            Errors.Clear();
+
             var interval = (long)_interval;
-
-            var types = allSignatures.ToList();
-
             var origByteOrder = _volume.GetReader().ByteOrder;
-
             long progressValue = 0;
-            long progressUpdate = interval * 0x200;
+            long progressUpdate = Math.Max(interval * 0x200, interval);
+            long scannedBlocks = _length / interval;
 
             for (long offset = 0; offset < _length; offset += interval)
             {
-                foreach (Type type in types)
-                {
-                    // too slow
-                    FileSignature signature = (FileSignature)Activator.CreateInstance(type, _volume, offset);
-
-                    _volume.GetReader().ByteOrder = origByteOrder;
-
-                    _volume.SeekFileArea(offset);
-                    bool test = signature.Test();
-                    if (test)
-                    {
-                        try
-                        {
-                            // Make sure that we record the file first
-                            _carvedFiles.Add(signature);
-
-                            // Attempt to parse the file
-                            _volume.SeekFileArea(offset);
-                            signature.Parse();
-                            Console.WriteLine(string.Format("Found {0} at 0x{1:X}.", signature.GetType().Name, offset));
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(string.Format("Exception thrown for {0} at 0x{1:X}: {2}", signature.GetType().Name, offset, e.Message));
-                            Console.WriteLine(e.StackTrace);
-                        }
-                    }
-                }
-
-                progressValue += interval;
-
-                if (progressValue % progressUpdate == 0)
-                    progress?.Report((int)(progressValue / interval));
-
                 if (cancellationToken.IsCancellationRequested)
                 {
                     return _carvedFiles;
                 }
+
+                bool blockFailed = false;
+
+                foreach (Type type in signatureTypes)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return _carvedFiles;
+                    }
+
+                    try
+                    {
+                        var signature = (FileSignature)Activator.CreateInstance(type, _volume, offset);
+                        _volume.GetReader().ByteOrder = origByteOrder;
+                        _volume.SeekFileArea(offset);
+
+                        if (!signature.Test())
+                        {
+                            continue;
+                        }
+
+                        _carvedFiles.Add(signature);
+                        _volume.SeekFileArea(offset);
+                        signature.Parse();
+                        Console.WriteLine($"Found {signature.GetType().Name} at 0x{offset:X}.");
+                    }
+                    catch (Exception ex)
+                    {
+                        blockFailed = true;
+                        Errors.Add($"[{type.Name}] 0x{offset:X}: {ex.Message}");
+                    }
+                }
+
+                foreach (var customDefinition in _customSignatures)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return _carvedFiles;
+                    }
+
+                    try
+                    {
+                        var signature = new CustomPatternSignature(_volume, offset, customDefinition);
+                        _volume.GetReader().ByteOrder = origByteOrder;
+                        _volume.SeekFileArea(offset);
+
+                        if (!signature.Test())
+                        {
+                            continue;
+                        }
+
+                        _carvedFiles.Add(signature);
+                        _volume.SeekFileArea(offset);
+                        signature.Parse();
+                        Console.WriteLine($"Found custom signature '{customDefinition.Name}' at 0x{offset:X}.");
+                    }
+                    catch (Exception ex)
+                    {
+                        blockFailed = true;
+                        Errors.Add($"[Custom:{customDefinition.Name}] 0x{offset:X}: {ex.Message}");
+                    }
+                }
+
+                if (blockFailed)
+                {
+                    BadOffsets.Add(offset);
+                }
+
+                progressValue += interval;
+                if (progressValue % progressUpdate == 0)
+                {
+                    progress?.Report((int)(progressValue / interval));
+                }
             }
 
-            // Fill up the progress bar
-            progress?.Report((int)(_length / interval));
-
+            progress?.Report((int)scannedBlocks);
             Console.WriteLine("Complete!");
-
             return _carvedFiles;
         }
     }

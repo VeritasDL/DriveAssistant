@@ -1,4 +1,4 @@
-name: Build FATXTools
+name: Build Drive Assistant
 
 on:
   push:
@@ -28,11 +28,11 @@ jobs:
       
     # Restore the application to populate the obj folder with RuntimeIdentifiers
     - name: Restore the application
-      run: msbuild FATXTools.sln /t:Restore /p:Configuration=Release
+      run: msbuild DriveAssistant.sln /t:Restore /p:Configuration=Release
       
     # Build the application
     - name: Build the application
-      run: msbuild FATXTools.sln /p:Configuration=Release /p:Platform="Any CPU"
+      run: msbuild DriveAssistant.sln /p:Configuration=Release /p:Platform="Any CPU"
     
     # Execute all unit tests in the solution
     - name: Execute unit tests
@@ -42,5 +42,5 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: FATXTools-Release
-        path: FATXTools/bin/Release/
+        name: DriveAssistant-Release
+        path: DriveAssistant.Wpf/bin/Release/

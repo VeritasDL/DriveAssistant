@@ -60,6 +60,21 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+publish/
+docs/issue_audit/
+DriveAssistant.Wpf/native/ps-hdd-bridge/build/
+
+# Local Codex/agent session notes and one-off smoke outputs
+*_WORK_LOG.MD
+*_WORK_LOG.md
+*_CONTEXT_LOG.MD
+*_CONTEXT_LOG.md
+ISSUE_AUDIT_AND_SMOKE_TEST_LOG.md
+SESSION_WORK_LOG.md
+WPF_CONTINUATION_CONTEXT_LOG.MD
+WPF_UI_REDESIGN_POLISH.MD
+XBOX_STORAGE_SUPPORT_WORK_LOG.MD
+SmokeHarness/
 
 # StyleCop
 StyleCopReport.xml

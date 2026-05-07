@@ -26,7 +26,8 @@ namespace FATX.FileSystem
     {
         private uint _Time;
         private DateTime? _DateTime;
-        private readonly DateTime _minWinFileTime = new DateTime(1601, 01, 01);
+        private readonly DateTime _minSafeFileTime = new DateTime(1980, 01, 01, 0, 0, 0, DateTimeKind.Local);
+        private readonly DateTime _maxSafeFileTime = new DateTime(9998, 12, 31, 23, 59, 58, DateTimeKind.Local);
 
         public TimeStamp(uint time)
         {
@@ -71,12 +72,7 @@ namespace FATX.FileSystem
         {
             if (this._DateTime.HasValue)
             {
-                if (this._DateTime < _minWinFileTime)
-                {
-                    return _minWinFileTime;
-                }
-
-                return this._DateTime.Value;
+                return ClampDateTime(this._DateTime.Value);
             }
             else
             {
@@ -85,8 +81,9 @@ namespace FATX.FileSystem
                     _DateTime = new DateTime(
                         this.Year, this.Month,
                         this.Day, this.Hour,
-                        this.Minute, this.Second);
-                    return _DateTime.Value;
+                        this.Minute, this.Second,
+                        DateTimeKind.Local);
+                    return ClampDateTime(_DateTime.Value);
                 }
                 catch (Exception)
                 {
@@ -99,16 +96,36 @@ namespace FATX.FileSystem
 
                     try
                     {
-                        _DateTime = new DateTime(year, month, day, hour, minute, second);
+                        _DateTime = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Local);
                     }
                     catch (Exception)
                     {
-                        _DateTime = _minWinFileTime;
+                        _DateTime = _minSafeFileTime;
                     }
 
-                    return _DateTime.Value;
+                    return ClampDateTime(_DateTime.Value);
                 }
             }
+        }
+
+        private DateTime ClampDateTime(DateTime value)
+        {
+            if (value.Kind == DateTimeKind.Unspecified)
+            {
+                value = DateTime.SpecifyKind(value, DateTimeKind.Local);
+            }
+
+            if (value < _minSafeFileTime)
+            {
+                return _minSafeFileTime;
+            }
+
+            if (value > _maxSafeFileTime)
+            {
+                return _maxSafeFileTime;
+            }
+
+            return value;
         }
     }
 }

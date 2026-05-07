@@ -345,7 +345,19 @@ namespace FATX.FileSystem
         /// <param name="origin"></param>
         public void SeekFileArea(long offset, SeekOrigin origin = SeekOrigin.Begin)
         {
-            // TODO: Check for invalid offset
+            if (origin == SeekOrigin.Begin)
+            {
+                if (offset < 0)
+                {
+                    offset = 0;
+                }
+
+                if (offset > FileAreaLength - 1)
+                {
+                    offset = FileAreaLength - 1;
+                }
+            }
+
             offset += FileAreaByteOffset + _partitionOffset;
             _reader.Seek(offset, origin);
         }
@@ -399,6 +411,7 @@ namespace FATX.FileSystem
 
             uint fatEntry = firstCluster;
             uint reservedIndexes = (_isFat16) ? Constants.Cluster16Reserved : Constants.ClusterReserved;
+            var visited = new HashSet<uint>();
             while (true)
             {
                 fatEntry = _fileAllocationTable[fatEntry];
@@ -414,6 +427,12 @@ namespace FATX.FileSystem
                     clusterChain = new List<uint>(1);
                     clusterChain.Add(firstCluster);
                     return clusterChain;
+                }
+
+                if (!visited.Add(fatEntry))
+                {
+                    Console.WriteLine($"File {dirent.FileName} has a cyclic cluster chain at {fatEntry}");
+                    break;
                 }
 
                 // Get next cluster.

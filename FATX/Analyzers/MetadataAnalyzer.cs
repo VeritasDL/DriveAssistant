@@ -1,12 +1,20 @@
 ﻿using FATX.FileSystem;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace FATX.Analyzers
 {
+    public interface IClusterDataReader : IDisposable
+    {
+        byte[] ReadCluster(uint cluster);
+    }
+
     public class MetadataAnalyzer
     {
         private Volume _volume;
@@ -41,9 +49,101 @@ namespace FATX.Analyzers
         {
             var sw = new Stopwatch();
             sw.Start();
+            _dirents.Clear();
             RecoverMetadata(cancellationToken, progress);
             sw.Stop();
             Console.WriteLine($"Execution Time: {sw.ElapsedMilliseconds} ms");
+            Console.WriteLine($"Found {_dirents.Count} dirents.");
+
+            return _dirents;
+        }
+
+        public List<DirectoryEntry> AnalyzeParallel(
+            Func<IClusterDataReader> readerFactory,
+            CancellationToken cancellationToken,
+            IProgress<int> progress,
+            int maxDegreeOfParallelism = 0)
+        {
+            if (readerFactory == null)
+            {
+                throw new ArgumentNullException(nameof(readerFactory));
+            }
+
+            var maxClusters = _length / _interval;
+            if (maxClusters <= 1)
+            {
+                return new List<DirectoryEntry>();
+            }
+
+            var sw = Stopwatch.StartNew();
+            var results = new ConcurrentBag<DirectoryEntry>();
+            var completed = 0;
+            var options = new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = maxDegreeOfParallelism > 0
+                    ? maxDegreeOfParallelism
+                    : Math.Max(1, Environment.ProcessorCount - 1)
+            };
+
+            try
+            {
+                Parallel.For(
+                    1L,
+                    maxClusters,
+                    options,
+                    () => new MetadataScanWorkerState(readerFactory()),
+                    (clusterLong, state, workerState) =>
+                    {
+                        options.CancellationToken.ThrowIfCancellationRequested();
+
+                        var cluster = (uint)clusterLong;
+                        try
+                        {
+                            var data = workerState.Reader.ReadCluster(cluster);
+                            ScanCluster(data, cluster, workerState.Results);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"ReadCluster failed at cluster {cluster}: {ex.Message}");
+                        }
+                        finally
+                        {
+                            var current = Interlocked.Increment(ref completed);
+                            if (current % 0x100 == 0)
+                            {
+                                progress?.Report(current);
+                            }
+                        }
+
+                        return workerState;
+                    },
+                    workerState =>
+                    {
+                        try
+                        {
+                            foreach (var dirent in workerState.Results)
+                            {
+                                results.Add(dirent);
+                            }
+                        }
+                        finally
+                        {
+                            workerState.Reader.Dispose();
+                        }
+                    });
+            }
+            catch (OperationCanceledException)
+            {
+                // Return the partial result set, matching the existing analyzer's cancellation behavior.
+            }
+
+            _dirents = results
+                .OrderBy(dirent => dirent.Offset)
+                .ToList();
+            progress?.Report((int)Math.Min(maxClusters, int.MaxValue));
+            sw.Stop();
+            Console.WriteLine($"Parallel Execution Time: {sw.ElapsedMilliseconds} ms");
             Console.WriteLine($"Found {_dirents.Count} dirents.");
 
             return _dirents;
@@ -58,29 +158,18 @@ namespace FATX.Analyzers
             var maxClusters = _length / _interval;
             for (uint cluster = 1; cluster < maxClusters; cluster++)
             {
-                var data = _volume.ReadCluster(cluster);
-                var clusterOffset = (cluster - 1) * _interval;
-                for (int i = 0; i < 256; i++)
+                byte[] data;
+                try
                 {
-                    var direntOffset = i * 0x40;
-                    try
-                    {
-                        DirectoryEntry dirent = new DirectoryEntry(_volume.Platform, data, direntOffset);
-
-                        if (IsValidDirent(dirent))
-                        {
-                            Console.WriteLine(string.Format("0x{0:X8}: {1}", clusterOffset + direntOffset, dirent.FileName));
-                            dirent.Cluster = cluster;
-                            dirent.Offset = _volume.ClusterToPhysicalOffset(cluster) + direntOffset;
-                            _dirents.Add(dirent);
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e.Message);
-                        Console.WriteLine(e.StackTrace);
-                    }
+                    data = _volume.ReadCluster(cluster);
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ReadCluster failed at cluster {cluster}: {ex.Message}");
+                    continue;
+                }
+
+                ScanCluster(data, cluster, _dirents);
 
                 if (cluster % 0x100 == 0)
                     progress?.Report((int)cluster);
@@ -96,6 +185,32 @@ namespace FATX.Analyzers
             }
 
             progress?.Report((int)maxClusters);
+        }
+
+        private void ScanCluster(byte[] data, uint cluster, ICollection<DirectoryEntry> results)
+        {
+            var clusterOffset = (cluster - 1) * _interval;
+            for (int i = 0; i < 256; i++)
+            {
+                var direntOffset = i * 0x40;
+                try
+                {
+                    DirectoryEntry dirent = new DirectoryEntry(_volume.Platform, data, direntOffset);
+
+                    if (IsValidDirent(dirent))
+                    {
+                        Console.WriteLine(string.Format("0x{0:X8}: {1}", clusterOffset + direntOffset, dirent.FileName));
+                        dirent.Cluster = cluster;
+                        dirent.Offset = _volume.ClusterToPhysicalOffset(cluster) + direntOffset;
+                        results.Add(dirent);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.Message);
+                    Console.WriteLine(e.StackTrace);
+                }
+            }
         }
 
         /// <summary>
@@ -356,6 +471,18 @@ namespace FATX.Analyzers
             }
 
             return true;
+        }
+
+        private sealed class MetadataScanWorkerState
+        {
+            public MetadataScanWorkerState(IClusterDataReader reader)
+            {
+                Reader = reader;
+            }
+
+            public IClusterDataReader Reader { get; }
+
+            public List<DirectoryEntry> Results { get; } = new List<DirectoryEntry>();
         }
     }
 }

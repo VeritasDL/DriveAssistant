@@ -1,0 +1,16 @@
+[
+  {
+    "Name": "DDS",
+    "HeaderHex": "44 44 53 20",
+    "FooterHex": "",
+    "MaxSearchLength": 1048576,
+    "Extension": ".dds"
+  },
+  {
+    "Name": "WAV",
+    "HeaderHex": "52 49 46 46",
+    "FooterHex": "",
+    "MaxSearchLength": 8388608,
+    "Extension": ".wav"
+  }
+]
