@@ -108,7 +108,7 @@ public partial class PlayStationMountWindow : Window, INotifyPropertyChanged
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Disk Images (*.img;*.bin;*.raw)|*.img;*.bin;*.raw|All files (*.*)|*.*",
+            Filter = "Disk Images (*.img;*.bin;*.raw;*.zip)|*.img;*.bin;*.raw;*.zip|All files (*.*)|*.*",
             CheckFileExists = true
         };
 
@@ -864,8 +864,20 @@ internal static class PlayStationNativeBridge
     private static DecryptPartitionDelegate? _decryptPartition;
     private static ExportFileDelegate? _exportFile;
     private static RecoverFilesJsonDelegate? _recoverFilesJson;
+    private static ListDeletedInodesJsonDelegate? _listDeletedInodesJson;
+    private static ExportDeletedInodeDelegate? _exportDeletedInode;
+    private static ListPartitionsVirtualDelegate? _listPartitionsVirtual;
+    private static DisplayPartitionVirtualDelegate? _displayPartitionVirtual;
+    private static ListFilesJsonVirtualDelegate? _listFilesJsonVirtual;
+    private static DecryptPartitionVirtualDelegate? _decryptPartitionVirtual;
+    private static ExportFileVirtualDelegate? _exportFileVirtual;
+    private static RecoverFilesJsonVirtualDelegate? _recoverFilesJsonVirtual;
+    private static ListDeletedInodesJsonVirtualDelegate? _listDeletedInodesJsonVirtual;
+    private static ExportDeletedInodeVirtualDelegate? _exportDeletedInodeVirtual;
     private static SetProgressCallbackDelegate? _setProgressCallback;
     private static readonly ProgressCallbackDelegate ProgressCallback = OnNativeProgress;
+    private static readonly VirtualDiskReadDelegate VirtualDiskRead = OnVirtualDiskRead;
+    private static readonly VirtualDiskLengthDelegate VirtualDiskLength = OnVirtualDiskLength;
     private static Exception? _loadError;
 
     public static event Action<PlayStationBridgeProgress>? ProgressChanged;
@@ -928,6 +940,137 @@ internal static class PlayStationNativeBridge
         out int requiredBytes);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ListDeletedInodesJsonDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imagePath,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ExportDeletedInodeDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imagePath,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        uint inodeNumber,
+        [MarshalAs(UnmanagedType.LPWStr)] string outputPath,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate ulong VirtualDiskReadDelegate(
+        IntPtr context,
+        ulong offset,
+        IntPtr data,
+        uint length);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate ulong VirtualDiskLengthDelegate(IntPtr context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ListPartitionsVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int DisplayPartitionVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ListFilesJsonVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int DecryptPartitionVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [MarshalAs(UnmanagedType.LPWStr)] string outputPath,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ExportFileVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [MarshalAs(UnmanagedType.LPWStr)] string filePath,
+        [MarshalAs(UnmanagedType.LPWStr)] string outputPath,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int RecoverFilesJsonVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [MarshalAs(UnmanagedType.LPWStr)] string outputDirectory,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ListDeletedInodesJsonVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ExportDeletedInodeVirtualDelegate(
+        [MarshalAs(UnmanagedType.LPWStr)] string imageLabel,
+        [MarshalAs(UnmanagedType.LPWStr)] string keyPath,
+        IntPtr context,
+        VirtualDiskReadDelegate readCallback,
+        VirtualDiskLengthDelegate lengthCallback,
+        [MarshalAs(UnmanagedType.LPWStr)] string partitionName,
+        uint inodeNumber,
+        [MarshalAs(UnmanagedType.LPWStr)] string outputPath,
+        [Out] byte[] output,
+        int outputLength,
+        out int requiredBytes);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void ProgressCallbackDelegate(
         int percent,
         [MarshalAs(UnmanagedType.LPStr)] string stage,
@@ -950,6 +1093,16 @@ internal static class PlayStationNativeBridge
                    _decryptPartition != null &&
                    _exportFile != null &&
                    _recoverFilesJson != null &&
+                   _listDeletedInodesJson != null &&
+                   _exportDeletedInode != null &&
+                   _listPartitionsVirtual != null &&
+                   _displayPartitionVirtual != null &&
+                   _listFilesJsonVirtual != null &&
+                   _decryptPartitionVirtual != null &&
+                   _exportFileVirtual != null &&
+                   _recoverFilesJsonVirtual != null &&
+                   _listDeletedInodesJsonVirtual != null &&
+                   _exportDeletedInodeVirtual != null &&
                    _setProgressCallback != null;
         }
     }
@@ -957,43 +1110,89 @@ internal static class PlayStationNativeBridge
     public static string ListPartitions(string imagePath, string keyPath)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _listPartitions!(imagePath, keyPath, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _listPartitions!(imagePath, keyPath, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _listPartitionsVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, buffer, length, out requiredBytes));
     }
 
     public static string DisplayPartition(string imagePath, string keyPath, string partitionName)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _displayPartition!(imagePath, keyPath, partitionName, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _displayPartition!(imagePath, keyPath, partitionName, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _displayPartitionVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, buffer, length, out requiredBytes));
     }
 
     public static string ListFilesJson(string imagePath, string keyPath, string partitionName)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _listFilesJson!(imagePath, keyPath, partitionName, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _listFilesJson!(imagePath, keyPath, partitionName, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _listFilesJsonVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, buffer, length, out requiredBytes));
     }
 
     public static string DecryptPartition(string imagePath, string keyPath, string partitionName, string outputPath)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _decryptPartition!(imagePath, keyPath, partitionName, outputPath, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _decryptPartition!(imagePath, keyPath, partitionName, outputPath, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _decryptPartitionVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, outputPath, buffer, length, out requiredBytes));
     }
 
     public static string ExportFile(string imagePath, string keyPath, string partitionName, string filePath, string outputPath)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _exportFile!(imagePath, keyPath, partitionName, filePath, outputPath, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _exportFile!(imagePath, keyPath, partitionName, filePath, outputPath, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _exportFileVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, filePath, outputPath, buffer, length, out requiredBytes));
     }
 
     public static string RecoverFilesJson(string imagePath, string keyPath, string partitionName, string outputDirectory)
     {
         EnsureLoaded();
-        return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
-            _recoverFilesJson!(imagePath, keyPath, partitionName, outputDirectory, buffer, length, out requiredBytes));
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _recoverFilesJson!(imagePath, keyPath, partitionName, outputDirectory, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _recoverFilesJsonVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, outputDirectory, buffer, length, out requiredBytes));
+    }
+
+    public static string ListDeletedInodesJson(string imagePath, string keyPath, string partitionName)
+    {
+        EnsureLoaded();
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _listDeletedInodesJson!(imagePath, keyPath, partitionName, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _listDeletedInodesJsonVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, buffer, length, out requiredBytes));
+    }
+
+    public static string ExportDeletedInode(string imagePath, string keyPath, string partitionName, uint inodeNumber, string outputPath)
+    {
+        EnsureLoaded();
+        return InvokeImageBridge(
+            imagePath,
+            (byte[] buffer, int length, out int requiredBytes) =>
+                _exportDeletedInode!(imagePath, keyPath, partitionName, inodeNumber, outputPath, buffer, length, out requiredBytes),
+            (IntPtr disk, byte[] buffer, int length, out int requiredBytes) =>
+                _exportDeletedInodeVirtual!(Path.GetFileName(imagePath), keyPath, disk, VirtualDiskRead, VirtualDiskLength, partitionName, inodeNumber, outputPath, buffer, length, out requiredBytes));
     }
 
     private static void EnsureLoaded()
@@ -1032,6 +1231,26 @@ internal static class PlayStationNativeBridge
                     NativeLibrary.GetExport(_libraryHandle, "pshdd_export_file"));
                 _recoverFilesJson = Marshal.GetDelegateForFunctionPointer<RecoverFilesJsonDelegate>(
                     NativeLibrary.GetExport(_libraryHandle, "pshdd_recover_files_json"));
+                _listDeletedInodesJson = Marshal.GetDelegateForFunctionPointer<ListDeletedInodesJsonDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_list_deleted_inodes_json"));
+                _exportDeletedInode = Marshal.GetDelegateForFunctionPointer<ExportDeletedInodeDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_export_deleted_inode"));
+                _listPartitionsVirtual = Marshal.GetDelegateForFunctionPointer<ListPartitionsVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_list_partitions_virtual"));
+                _displayPartitionVirtual = Marshal.GetDelegateForFunctionPointer<DisplayPartitionVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_display_partition_virtual"));
+                _listFilesJsonVirtual = Marshal.GetDelegateForFunctionPointer<ListFilesJsonVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_list_files_json_virtual"));
+                _decryptPartitionVirtual = Marshal.GetDelegateForFunctionPointer<DecryptPartitionVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_decrypt_partition_virtual"));
+                _exportFileVirtual = Marshal.GetDelegateForFunctionPointer<ExportFileVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_export_file_virtual"));
+                _recoverFilesJsonVirtual = Marshal.GetDelegateForFunctionPointer<RecoverFilesJsonVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_recover_files_json_virtual"));
+                _listDeletedInodesJsonVirtual = Marshal.GetDelegateForFunctionPointer<ListDeletedInodesJsonVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_list_deleted_inodes_json_virtual"));
+                _exportDeletedInodeVirtual = Marshal.GetDelegateForFunctionPointer<ExportDeletedInodeVirtualDelegate>(
+                    NativeLibrary.GetExport(_libraryHandle, "pshdd_export_deleted_inode_virtual"));
                 _setProgressCallback = Marshal.GetDelegateForFunctionPointer<SetProgressCallbackDelegate>(
                     NativeLibrary.GetExport(_libraryHandle, "pshdd_set_progress_callback"));
                 _setProgressCallback(ProgressCallback);
@@ -1047,6 +1266,16 @@ internal static class PlayStationNativeBridge
                 _decryptPartition = null;
                 _exportFile = null;
                 _recoverFilesJson = null;
+                _listDeletedInodesJson = null;
+                _exportDeletedInode = null;
+                _listPartitionsVirtual = null;
+                _displayPartitionVirtual = null;
+                _listFilesJsonVirtual = null;
+                _decryptPartitionVirtual = null;
+                _exportFileVirtual = null;
+                _recoverFilesJsonVirtual = null;
+                _listDeletedInodesJsonVirtual = null;
+                _exportDeletedInodeVirtual = null;
                 _setProgressCallback = null;
                 return false;
             }
@@ -1080,6 +1309,68 @@ internal static class PlayStationNativeBridge
         }
 
         return text;
+    }
+
+    private delegate int VirtualBridgeCall(IntPtr diskContext, byte[] output, int outputLength, out int requiredBytes);
+
+    private static string InvokeImageBridge(string imagePath, BridgeCall rawCall, VirtualBridgeCall virtualCall)
+    {
+        if (!PlayStationArchiveDisk.IsSupported(imagePath))
+        {
+            return InvokeBridge(rawCall);
+        }
+
+        using var disk = PlayStationArchiveDisk.Open(imagePath);
+        var handle = GCHandle.Alloc(disk);
+        try
+        {
+            return InvokeBridge((byte[] buffer, int length, out int requiredBytes) =>
+                virtualCall(GCHandle.ToIntPtr(handle), buffer, length, out requiredBytes));
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
+    private static ulong OnVirtualDiskRead(IntPtr context, ulong offset, IntPtr data, uint length)
+    {
+        try
+        {
+            if (context == IntPtr.Zero || data == IntPtr.Zero || length == 0)
+            {
+                return 0;
+            }
+
+            var disk = (PlayStationArchiveDisk)GCHandle.FromIntPtr(context).Target!;
+            var requestLength = length > int.MaxValue ? int.MaxValue : (int)length;
+            var buffer = new byte[requestLength];
+            var read = disk.Read(checked((long)offset), buffer, 0, buffer.Length);
+            if (read > 0)
+            {
+                Marshal.Copy(buffer, 0, data, read);
+            }
+
+            return (ulong)read;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static ulong OnVirtualDiskLength(IntPtr context)
+    {
+        try
+        {
+            return context == IntPtr.Zero
+                ? 0
+                : (ulong)((PlayStationArchiveDisk)GCHandle.FromIntPtr(context).Target!).Length;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static string DecodeNullTerminatedUtf8(byte[] buffer)

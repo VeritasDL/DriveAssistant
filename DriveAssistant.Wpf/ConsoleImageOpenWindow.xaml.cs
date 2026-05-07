@@ -44,7 +44,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc)|*.img;*.bin;*.raw;*.imgc|All files (*.*)|*.*",
+            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.zip)|*.img;*.bin;*.raw;*.imgc;*.zip|All files (*.*)|*.*",
             CheckFileExists = true
         };
 

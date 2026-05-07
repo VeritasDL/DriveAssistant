@@ -689,7 +689,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static bool IsSupportedImagePath(string path)
     {
-        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw";
+        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".zip";
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -968,20 +968,55 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var result = await Task.Run(() =>
             {
-                var decryptedPath = EnsurePlayStationDecryptedPartition(volume);
-                var scanner = new Ps3DirentScanner(decryptedPath, volume.Offset);
-                return scanner.Analyze(CancellationToken.None, progress);
+                var activeRows = volume.ScanMetadata()
+                    .Select(entry => new FileRow(entry, "Metadata"))
+                    .ToList();
+
+                var deletedCandidates = new List<FileRow>();
+                try
+                {
+                    deletedCandidates.AddRange(volume.ScanDeletedInodes()
+                        .Select(entry => new FileRow(entry, volume.Name, volume)));
+                }
+                catch
+                {
+                    // Some PlayStation partitions are FAT or otherwise not UFS2; active metadata remains useful.
+                }
+
+                var existingDecryptedPath = TryGetExistingPlayStationDecryptedPartition(volume);
+                if (!string.IsNullOrWhiteSpace(existingDecryptedPath))
+                {
+                    var scanner = new Ps4UfsDirentScanner(existingDecryptedPath, volume.Offset);
+                    deletedCandidates = scanner.Analyze(CancellationToken.None, progress)
+                        .Where(entry => entry.IsDeleted)
+                        .GroupBy(entry => $"{entry.Offset:X}:{entry.Name}", StringComparer.OrdinalIgnoreCase)
+                        .Select(group => new FileRow(group.First(), volume.Name, volume))
+                        .Concat(deletedCandidates)
+                        .GroupBy(row => row.Identity, StringComparer.OrdinalIgnoreCase)
+                        .Select(group => group.First())
+                        .ToList();
+                }
+
+                return new
+                {
+                    Rows = activeRows.Concat(deletedCandidates).ToList(),
+                    ActiveCount = activeRows.Count,
+                    DeletedCandidateCount = deletedCandidates.Count,
+                    ScannedDeletedCandidates = deletedCandidates.Count > 0 || !string.IsNullOrWhiteSpace(existingDecryptedPath)
+                };
             });
 
             MetadataResults.Clear();
-            foreach (var row in result.Select(entry => new FileRow(entry, volume.Name)))
+            foreach (var row in result.Rows)
             {
                 MetadataResults.Add(row);
             }
 
             ShowMetadataResultsInFileTable(
                 $"{volume.Name} metadata",
-                $"{volume.Name} metadata scan: {MetadataResults.Count:N0} directory entries found");
+                result.ScannedDeletedCandidates
+                    ? $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates"
+                    : $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries; deleted UFS candidates require an existing decrypted partition cache");
             RecoveryTreeRoots.Clear();
             RecoveryRows.Clear();
             if (ClusterViewerPanel.Visibility == Visibility.Visible)
@@ -994,7 +1029,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             progressRow.Update(100, "100%");
             StatusText = _isFileCarverRunning ? "File carver still running..." : "Ready";
-            AppendLog($"PlayStation metadata scan complete: {MetadataResults.Count:N0} directory entries found.");
+            AppendLog(result.ScannedDeletedCandidates
+                ? $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates."
+                : $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries. Deleted UFS candidate scan skipped because no decrypted partition cache exists.");
         }
         catch (Exception ex)
         {
@@ -1165,6 +1202,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     var sourceOffset = volume.Offset + volume.FileAreaByteOffset;
                     var fastCarver = new GenericFileCarver(activeRawImagePath, sourceOffset, scanLength, sourceOffset, interval, $"FATX {volume.Name}");
+                    fastCarver.SetCustomSignatures(CustomSignatureLoader.Load(_settings.CustomCarversFile));
                     var fastRows = fastCarver.Analyze(CancellationToken.None, progress)
                         .Select(file => new CarvedFileRow(file))
                         .ToList();
@@ -1305,6 +1343,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var rows = await Task.Run(() =>
             {
                 var carver = new GenericFileCarver(sourcePath, sourceOffset, scanLength, displayBaseOffset, interval, $"{family} {partitionName}");
+                carver.SetCustomSignatures(CustomSignatureLoader.Load(_settings.CustomCarversFile));
                 return carver.Analyze(CancellationToken.None, progress)
                     .Select(file => new CarvedFileRow(file))
                     .ToList();
@@ -1617,7 +1656,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         MessageBox.Show(
             this,
             "Created by aerosoul94, forked by rain0x\n" +
-            "Project: Drive Assistant\n" +
+            "Original source code: https://github.com/aerosoul94/FATXTools\n" +
             "Please report any bugs\n" +
             $"Version: {BuildInfo.Version}\n" +
             $"Commit: {BuildInfo.CommitHash}\n" +
@@ -2234,11 +2273,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ClusterRows.Add(new ClusterRow(addressSpace, cluster, occupancy.GetOccupants(cluster)));
         }
 
-        var rowCount = (int)Math.Ceiling(addressSpace.ClusterCount / (double)ClusterMapColumns);
-        ClusterMapRows = Enumerable.Range(0, rowCount)
-            .Select(row => new ClusterMapRow(addressSpace, addressSpace.FirstCluster + (uint)(row * ClusterMapColumns), ClusterMapColumns, occupancy))
+        var fullRowCount = (int)Math.Ceiling(addressSpace.ClusterCount / (double)ClusterMapColumns);
+        var displayRowStarts = occupancy.GetDisplayRowStartClusters(addressSpace, ClusterMapColumns);
+        if (displayRowStarts.Count == 0 && fullRowCount > 0)
+        {
+            displayRowStarts = Enumerable.Range(0, Math.Min(fullRowCount, 256))
+                .Select(row => addressSpace.FirstCluster + (uint)(row * ClusterMapColumns))
+                .ToList();
+        }
+
+        ClusterMapRows = displayRowStarts
+            .Select(startCluster => new ClusterMapRow(addressSpace, startCluster, ClusterMapColumns, occupancy))
             .ToList();
-        ClusterViewerSummary = $"{addressSpace.Name}: {addressSpace.ClusterCount:N0} {addressSpace.UnitName.ToLowerInvariant()}s, {ClusterRows.Count:N0} occupied/recovered units shown.";
+        var rowSummary = ClusterMapRows.Count < fullRowCount
+            ? $"{ClusterMapRows.Count:N0}/{fullRowCount:N0} map rows shown; empty rows omitted, large extents sampled"
+            : $"{ClusterMapRows.Count:N0} map rows shown";
+        var colorSummary = "green=allocated/active file data, yellow=deleted/recovered, red=overlap, gray=free/unknown";
+        ClusterViewerSummary = $"{addressSpace.Name}: {addressSpace.ClusterCount:N0} {addressSpace.UnitName.ToLowerInvariant()}s, {ClusterRows.Count:N0} listed units. {rowSummary}; {colorSummary}.";
     }
 
     private static ClusterOccupancyMap BuildFatxClusterOccupancy(FileDatabase database)
@@ -2262,6 +2313,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var occupancy = new ClusterOccupancyMap();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        AddNtfsBitmapOccupancy(volume, occupancy);
+
         foreach (var entry in WalkNtfs(volume, null))
         {
             AddNtfsEntryOccupancy(volume, entry, occupancy, seen);
@@ -2273,6 +2326,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         return occupancy;
+    }
+
+    private static void AddNtfsBitmapOccupancy(XboxNtfsVolume volume, ClusterOccupancyMap occupancy)
+    {
+        var occupant = ClusterOccupant.FromNtfsAllocationBitmap(volume);
+        foreach (var run in volume.ReadAllocationRuns())
+        {
+            if (run.StartCluster < 0 || run.ClusterCount <= 0 || run.StartCluster > uint.MaxValue)
+            {
+                continue;
+            }
+
+            var maxRunCount = uint.MaxValue - run.StartCluster + 1;
+            var endCluster = run.ClusterCount >= maxRunCount
+                ? uint.MaxValue
+                : run.StartCluster + run.ClusterCount - 1;
+            occupancy.AddRangeCompact((uint)run.StartCluster, (uint)endCluster, occupant);
+        }
     }
 
     private static void AddNtfsEntryOccupancy(
@@ -3436,6 +3507,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (row.PsMetadataEntry != null && row.PsMetadataVolume != null && row.PsMetadataEntry.Inode > 0)
+        {
+            progress?.StartItem(row.PsMetadataEntry.Name);
+            row.PsMetadataVolume.ExportDeletedInode(row.PsMetadataEntry.Inode, path);
+            progress?.AddBytes(row.PsMetadataEntry.Size);
+            progress?.CompleteItem();
+            return;
+        }
+
         if (row.GenericEntry != null)
         {
             WriteGenericFile(row.GenericEntry, path, progress);
@@ -4201,10 +4281,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Offset = row.Offset,
             Cluster = row.ClusterNumber,
             IsDeleted = row.IsDeleted,
-            Attributes = row.NtfsEntry?.Attributes.ToString() ?? row.PlayStationEntry?.Type ?? row.GenericEntry?.Attributes ?? row.SnapshotEntry?.Attributes ?? row.Entry?.FileAttributes.ToString() ?? row.Ps3Entry?.Kind ?? string.Empty,
+            Attributes = row.NtfsEntry?.Attributes.ToString() ?? row.PlayStationEntry?.Type ?? row.GenericEntry?.Attributes ?? row.SnapshotEntry?.Attributes ?? row.Entry?.FileAttributes.ToString() ?? row.Ps3Entry?.Kind ?? row.PsMetadataEntry?.Kind ?? string.Empty,
             Fragmentation = row.EffectiveFragmentationText,
             Extents = row.NtfsEntry?.ExtentSummary ?? row.PlayStationEntry?.ExtentSummary ?? row.GenericEntry?.ExtentSummary ?? row.SnapshotEntry?.Extents ?? string.Empty,
-            MetadataStatus = row.NtfsEntry?.MetadataStatus ?? row.PlayStationEntry?.RecoveryDisplayStatus ?? row.GenericEntry?.MetadataStatus ?? row.SnapshotEntry?.MetadataStatus ?? (row.Ps3Entry != null ? "PS3 directory entry" : row.RecoveryStatusName),
+            MetadataStatus = row.NtfsEntry?.MetadataStatus ?? row.PlayStationEntry?.RecoveryDisplayStatus ?? row.GenericEntry?.MetadataStatus ?? row.SnapshotEntry?.MetadataStatus ?? row.PsMetadataEntry?.MetadataStatus ?? (row.Ps3Entry != null ? "PS3 directory entry" : row.RecoveryStatusName),
             MftRecordIndex = row.NtfsEntry?.MftRecordIndex ?? row.SnapshotEntry?.MftRecordIndex ?? -1,
             MftSequenceNumber = row.NtfsEntry?.SequenceNumber ?? row.SnapshotEntry?.MftSequenceNumber ?? 0,
             ParentMftRecordIndex = row.NtfsEntry?.ParentMftRecordIndex ?? row.SnapshotEntry?.ParentMftRecordIndex ?? -1,
@@ -4527,6 +4607,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             InspectorRows.Add(new InspectorRow("Name Length", row.Ps3Entry.NameLength.ToString("N0")));
             InspectorRows.Add(new InspectorRow("Metadata Status", "PS3 directory entry"));
         }
+        else if (row.PsMetadataEntry != null)
+        {
+            InspectorRows.Add(new InspectorRow("Partition", row.Ps3PartitionName ?? string.Empty));
+            InspectorRows.Add(new InspectorRow("Inode", row.PsMetadataEntry.Inode.ToString("N0")));
+            InspectorRows.Add(new InspectorRow("Record Length", row.PsMetadataEntry.RecordLength.ToString("N0")));
+            InspectorRows.Add(new InspectorRow("Dirent Type", $"{row.PsMetadataEntry.FileType}"));
+            InspectorRows.Add(new InspectorRow("Name Length", row.PsMetadataEntry.NameLength.ToString("N0")));
+            InspectorRows.Add(new InspectorRow("Metadata Status", row.PsMetadataEntry.MetadataStatus));
+            InspectorRows.Add(new InspectorRow("Data Offsets", row.PsMetadataEntry.DataOffsetCount.ToString("N0")));
+            InspectorRows.Add(new InspectorRow("Fragment Runs", row.PsMetadataEntry.DataRunCount.ToString("N0")));
+            InspectorRows.Add(new InspectorRow("Largest Run", FormatBytes(row.PsMetadataEntry.LargestRunBytes)));
+            InspectorRows.Add(new InspectorRow("Extents", row.BuildPlayStationMetadataExtentSummary() ?? string.Empty));
+        }
         if (row.HasRecoveryStatus)
         {
             InspectorRows.Add(new InspectorRow("Recovery", row.FragmentationText));
@@ -4691,9 +4784,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private string EnsurePlayStationDecryptedPartition(PlayStationVolume volume)
     {
-        var existing = _temporaryScanFiles.FirstOrDefault(path =>
-            Path.GetFileName(path).Contains(SanitizeFileName(volume.Name), StringComparison.OrdinalIgnoreCase) &&
-            File.Exists(path));
+        var existing = TryGetExistingPlayStationDecryptedPartition(volume);
         if (!string.IsNullOrWhiteSpace(existing))
         {
             return existing;
@@ -4701,10 +4792,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var path = Path.Combine(
             Path.GetTempPath(),
-            $"drive_assistant_ps3_{SanitizeFileName(volume.Name)}_{DateTime.UtcNow.Ticks}.img");
+            $"drive_assistant_ps_{SanitizeFileName(volume.Name)}_{DateTime.UtcNow.Ticks}.img");
         volume.DecryptToFile(path);
         _temporaryScanFiles.Add(path);
         return path;
+    }
+
+    private string? TryGetExistingPlayStationDecryptedPartition(PlayStationVolume volume)
+    {
+        return _temporaryScanFiles.FirstOrDefault(path =>
+            Path.GetFileName(path).Contains(SanitizeFileName(volume.Name), StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(path));
     }
 
     private void ClearTemporaryScanFiles()
@@ -5532,6 +5630,14 @@ public sealed class FileRow
         Ps3PartitionName = partitionName;
     }
 
+    public FileRow(PlayStationMetadataEntry entry, string partitionName, PlayStationVolume? volume = null)
+    {
+        PsMetadataEntry = entry;
+        PsMetadataVolume = volume;
+        Source = "Metadata";
+        Ps3PartitionName = partitionName;
+    }
+
     public DirectoryEntry? Entry { get; }
 
     public XboxFileEntry? NtfsEntry { get; }
@@ -5543,6 +5649,10 @@ public sealed class FileRow
     public SnapshotFileEntry? SnapshotEntry { get; }
 
     public Ps3DirectoryEntry? Ps3Entry { get; }
+
+    public PlayStationMetadataEntry? PsMetadataEntry { get; }
+
+    public PlayStationVolume? PsMetadataVolume { get; }
 
     public string? Ps3PartitionName { get; }
 
@@ -5566,15 +5676,17 @@ public sealed class FileRow
                             ? $"snapshot:{SnapshotEntry.Path}:{SnapshotEntry.Name}:{SnapshotEntry.Offset:X}"
                             : Ps3Entry != null
                                 ? $"ps3dirent:{Ps3PartitionName}:{Ps3Entry.Offset:X}:{Ps3Entry.Name}"
-                                : Name;
+                                : PsMetadataEntry != null
+                                    ? $"psdirent:{Ps3PartitionName}:{PsMetadataEntry.Offset:X}:{PsMetadataEntry.Name}:{PsMetadataEntry.IsDeleted}"
+                                    : Name;
 
-    public string Name => Entry?.FileName ?? NtfsEntry?.Name ?? PlayStationEntry?.Name ?? GenericEntry?.Name ?? SnapshotEntry?.Name ?? Ps3Entry?.Name ?? string.Empty;
+    public string Name => Entry?.FileName ?? NtfsEntry?.Name ?? PlayStationEntry?.Name ?? GenericEntry?.Name ?? SnapshotEntry?.Name ?? Ps3Entry?.Name ?? PsMetadataEntry?.Name ?? string.Empty;
 
-    public string Kind => Ps3Entry?.Kind ?? GenericEntry?.Kind ?? (IsFolder ? "Folder" : "File");
+    public string Kind => PsMetadataEntry?.Kind ?? Ps3Entry?.Kind ?? GenericEntry?.Kind ?? (IsFolder ? "Folder" : "File");
 
     public int KindSort => IsFolder ? 0 : 1;
 
-    public bool IsFolder => Entry?.IsDirectory() ?? NtfsEntry?.IsDirectory ?? PlayStationEntry?.IsDirectory ?? GenericEntry?.IsDirectory ?? SnapshotEntry?.IsDirectory ?? Ps3Entry?.Kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) ?? false;
+    public bool IsFolder => Entry?.IsDirectory() ?? NtfsEntry?.IsDirectory ?? PlayStationEntry?.IsDirectory ?? GenericEntry?.IsDirectory ?? SnapshotEntry?.IsDirectory ?? Ps3Entry?.Kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) ?? PsMetadataEntry?.Kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) ?? false;
 
     public string KindGlyph => IsFolder ? "\uE8B7" : "\uE8A5";
 
@@ -5584,7 +5696,7 @@ public sealed class FileRow
 
     public string SizeText => IsFolder ? string.Empty : MainWindowFormat.Bytes(SizeBytes);
 
-    public long SizeBytes => IsFolder ? -1 : Entry?.FileSize ?? NtfsEntry?.Length ?? PlayStationEntry?.Length ?? GenericEntry?.Length ?? SnapshotEntry?.Size ?? 0;
+    public long SizeBytes => IsFolder ? -1 : Entry?.FileSize ?? NtfsEntry?.Length ?? PlayStationEntry?.Length ?? GenericEntry?.Length ?? SnapshotEntry?.Size ?? PsMetadataEntry?.Size ?? 0;
 
     public DateTime Created => Entry?.CreationTime.AsDateTime() ?? NtfsEntry?.Created ?? PlayStationEntry?.Created ?? GenericEntry?.Created ?? SnapshotEntry?.Created ?? DateTime.MinValue;
 
@@ -5600,13 +5712,13 @@ public sealed class FileRow
 
     public string OffsetText => $"0x{Offset:X}";
 
-    public long Offset => Entry?.Offset ?? NtfsEntry?.Offset ?? PlayStationEntry?.Offset ?? GenericEntry?.Offset ?? SnapshotEntry?.Offset ?? Ps3Entry?.Offset ?? 0;
+    public long Offset => Entry?.Offset ?? NtfsEntry?.Offset ?? PlayStationEntry?.Offset ?? GenericEntry?.Offset ?? SnapshotEntry?.Offset ?? Ps3Entry?.Offset ?? PsMetadataEntry?.Offset ?? 0;
 
     public string ClusterText => ClusterNumber == 0 && (NtfsEntry != null || PlayStationEntry != null || GenericEntry != null || SnapshotEntry != null) ? string.Empty : ClusterNumber.ToString();
 
     public long ClusterNumber => Entry?.Cluster ?? NtfsEntry?.Cluster ?? GenericEntry?.Cluster ?? SnapshotEntry?.Cluster ?? 0;
 
-    public bool IsDeleted => Entry?.IsDeleted() ?? NtfsEntry?.IsDeleted ?? GenericEntry?.IsDeleted ?? SnapshotEntry?.IsDeleted ?? false;
+    public bool IsDeleted => Entry?.IsDeleted() ?? NtfsEntry?.IsDeleted ?? GenericEntry?.IsDeleted ?? SnapshotEntry?.IsDeleted ?? PsMetadataEntry?.IsDeleted ?? false;
 
     public bool HasRecoveryStatus => RecoveryFile != null && Source.Equals("Recovered", StringComparison.OrdinalIgnoreCase);
 
@@ -5664,15 +5776,15 @@ public sealed class FileRow
         ? ClusterChainMetrics.CountRuns(ClusterChain)
         : Entry != null
             ? ClusterChainMetrics.CountRuns(FatxActiveClusterChain)
-            : NtfsEntry?.Extents.Count ?? PlayStationEntry?.DataRunCount ?? GenericEntry?.Extents.Count ?? SnapshotEntry?.FragmentRunCount ?? 0;
+            : NtfsEntry?.Extents.Count ?? PlayStationEntry?.DataRunCount ?? PsMetadataEntry?.DataRunCount ?? GenericEntry?.Extents.Count ?? SnapshotEntry?.FragmentRunCount ?? 0;
 
     public int FragmentationSort => HasRecoveryStatus
         ? RecoveryScore * 100000 + FragmentRunCount
-        : Entry == null && NtfsEntry == null && PlayStationEntry == null && GenericEntry == null && SnapshotEntry == null ? int.MaxValue : FragmentRunCount;
+        : Entry == null && NtfsEntry == null && PlayStationEntry == null && GenericEntry == null && SnapshotEntry == null && PsMetadataEntry == null ? int.MaxValue : FragmentRunCount;
 
     public string FragmentRunText => HasRecoveryStatus
         ? $"{FragmentRunCount:N0} {(FragmentRunCount == 1 ? "run" : "runs")}"
-        : Entry != null && !IsFolder || NtfsEntry is { IsDirectory: false } || PlayStationEntry is { IsDirectory: false } || GenericEntry is { IsDirectory: false } || SnapshotEntry is { IsDirectory: false }
+        : Entry != null && !IsFolder || NtfsEntry is { IsDirectory: false } || PlayStationEntry is { IsDirectory: false } || GenericEntry is { IsDirectory: false } || SnapshotEntry is { IsDirectory: false } || PsMetadataEntry is { Kind: not "Directory" }
             ? $"{FragmentRunCount:N0} {(FragmentRunCount == 1 ? "run" : "runs")}"
             : string.Empty;
 
@@ -5797,6 +5909,8 @@ public sealed class FileRow
 
     public string PlayStationFragmentationText => PlayStationEntry?.RecoveryDisplayStatus ?? string.Empty;
 
+    public string PlayStationMetadataFragmentationText => PsMetadataEntry?.FragmentationStatus ?? string.Empty;
+
     public string GenericFragmentationText => GenericEntry?.FragmentationStatus ?? string.Empty;
 
     public string SnapshotFragmentationText => SnapshotEntry?.Fragmentation ?? string.Empty;
@@ -5809,6 +5923,8 @@ public sealed class FileRow
                 ? NtfsFragmentationText
                 : PlayStationFragmentationText.Length > 0
                     ? PlayStationFragmentationText
+                    : PlayStationMetadataFragmentationText.Length > 0
+                        ? PlayStationMetadataFragmentationText
                     : GenericFragmentationText.Length > 0
                         ? GenericFragmentationText
                         : SnapshotFragmentationText;
@@ -5817,6 +5933,7 @@ public sealed class FileRow
         ? NtfsEntry?.MetadataStatus
           ?? GenericEntry?.MetadataStatus
           ?? SnapshotEntry?.MetadataStatus
+          ?? PsMetadataEntry?.MetadataStatus
           ?? (Ps3Entry != null ? "PS3 directory entry" : EffectiveFragmentationText)
         : EffectiveFragmentationText;
 
@@ -5844,13 +5961,31 @@ public sealed class FileRow
 
         var extents = Entry != null
             ? ClusterRangesText
-            : NtfsEntry?.ExtentSummary ?? PlayStationEntry?.ExtentSummary ?? GenericEntry?.ExtentSummary ?? SnapshotEntry?.Extents ?? string.Empty;
+            : NtfsEntry?.ExtentSummary ?? PlayStationEntry?.ExtentSummary ?? BuildPlayStationMetadataExtentSummary() ?? GenericEntry?.ExtentSummary ?? SnapshotEntry?.Extents ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(extents))
         {
             builder.AppendLine(extents);
         }
 
         return builder.ToString().Trim();
+    }
+
+    public string? BuildPlayStationMetadataExtentSummary()
+    {
+        if (PsMetadataEntry == null)
+        {
+            return null;
+        }
+
+        return string.Join(Environment.NewLine, new[]
+        {
+            PsMetadataEntry.MetadataStatus,
+            PsMetadataEntry.DataOffsetCount > 0 ? $"Data offsets: {PsMetadataEntry.DataOffsetCount:N0}" : string.Empty,
+            PsMetadataEntry.DataRunCount > 0 ? $"Estimated runs: {PsMetadataEntry.DataRunCount:N0}" : string.Empty,
+            PsMetadataEntry.LargestRunBytes > 0 ? $"Largest run: {PsMetadataEntry.LargestRunBytes:N0} bytes" : string.Empty,
+            !string.IsNullOrWhiteSpace(PsMetadataEntry.DataRanges) ? $"Ranges: {PsMetadataEntry.DataRanges}" : string.Empty,
+            !string.IsNullOrWhiteSpace(PsMetadataEntry.DataOffsets) ? $"Offsets: {PsMetadataEntry.DataOffsets}" : string.Empty
+        }.Where(text => !string.IsNullOrWhiteSpace(text)));
     }
 
     private static Brush GetFragmentationStatusBrush(string status, bool isDeleted)
@@ -6508,6 +6643,17 @@ public sealed record ClusterOccupant(
             entry.FragmentationStatus);
     }
 
+    public static ClusterOccupant FromNtfsAllocationBitmap(XboxNtfsVolume volume)
+    {
+        return new ClusterOccupant(
+            $"ntfs-bitmap:{RuntimeHelpers.GetHashCode(volume)}",
+            "$Bitmap allocated cluster",
+            "NTFS allocation bitmap",
+            volume.ClusterSize,
+            false,
+            "Allocated by NTFS $Bitmap; no specific file record is mapped in this cell.");
+    }
+
     public static ClusterOccupant FromPlayStation(PlayStationFileEntry entry)
     {
         return new ClusterOccupant(
@@ -6545,10 +6691,13 @@ public sealed record ClusterOccupant(
 public sealed class ClusterOccupancyMap
 {
     private const uint ExpandedRangeLimit = 8192;
+    private const uint MaxRowsPerLargeRange = 512;
     private readonly Dictionary<uint, List<ClusterOccupant>> _exact = [];
     private readonly List<ClusterOccupantRange> _ranges = [];
 
     public IEnumerable<uint> DisplayClusters => _exact.Keys.Concat(_ranges.Select(range => range.Start));
+
+    public int RangeCount => _ranges.Count;
 
     public void Add(uint cluster, ClusterOccupant occupant)
     {
@@ -6586,6 +6735,16 @@ public sealed class ClusterOccupancyMap
         _ranges.Add(new ClusterOccupantRange(start, end, occupant));
     }
 
+    public void AddRangeCompact(uint start, uint end, ClusterOccupant occupant)
+    {
+        if (end < start)
+        {
+            return;
+        }
+
+        _ranges.Add(new ClusterOccupantRange(start, end, occupant));
+    }
+
     public IReadOnlyList<ClusterOccupant> GetOccupants(uint cluster)
     {
         var occupants = _exact.TryGetValue(cluster, out var exactOccupants)
@@ -6601,6 +6760,79 @@ public sealed class ClusterOccupancyMap
         }
 
         return occupants;
+    }
+
+    public IReadOnlyList<uint> GetDisplayRowStartClusters(ClusterMapAddressSpace addressSpace, int columns)
+    {
+        if (columns <= 0 || addressSpace.ClusterCount == 0)
+        {
+            return [];
+        }
+
+        var rowIndexes = new SortedSet<uint>();
+        if (addressSpace.RootCluster is { } rootCluster && addressSpace.Contains(rootCluster))
+        {
+            rowIndexes.Add(GetRowIndex(addressSpace, rootCluster, columns));
+        }
+
+        foreach (var cluster in _exact.Keys)
+        {
+            if (addressSpace.Contains(cluster))
+            {
+                rowIndexes.Add(GetRowIndex(addressSpace, cluster, columns));
+            }
+        }
+
+        foreach (var range in _ranges)
+        {
+            var start = Math.Max(range.Start, addressSpace.FirstCluster);
+            var lastCluster = (uint)Math.Min(
+                uint.MaxValue,
+                (ulong)addressSpace.FirstCluster + addressSpace.ClusterCount - 1);
+            var end = Math.Min(range.End, lastCluster);
+            if (end < start)
+            {
+                continue;
+            }
+
+            var startRow = GetRowIndex(addressSpace, start, columns);
+            var endRow = GetRowIndex(addressSpace, end, columns);
+            var rowCount = endRow - startRow + 1;
+            if (rowCount <= MaxRowsPerLargeRange)
+            {
+                for (var row = startRow; row <= endRow; row++)
+                {
+                    rowIndexes.Add(row);
+                    if (row == uint.MaxValue)
+                    {
+                        break;
+                    }
+                }
+
+                continue;
+            }
+
+            var step = Math.Max(1, rowCount / MaxRowsPerLargeRange);
+            for (var row = startRow; row <= endRow; row += step)
+            {
+                rowIndexes.Add(row);
+                if (uint.MaxValue - row < step)
+                {
+                    break;
+                }
+            }
+
+            rowIndexes.Add(endRow);
+        }
+
+        return rowIndexes
+            .Select(row => (uint)Math.Min(uint.MaxValue, (ulong)addressSpace.FirstCluster + (ulong)row * (uint)columns))
+            .ToList();
+    }
+
+    private static uint GetRowIndex(ClusterMapAddressSpace addressSpace, uint cluster, int columns)
+    {
+        return (cluster - addressSpace.FirstCluster) / (uint)columns;
     }
 
     private static void AddUnique(List<ClusterOccupant> occupants, ClusterOccupant occupant)

@@ -5,7 +5,11 @@ namespace FATX.Analyzers.Signatures
     public class CustomSignatureDefinition
     {
         public string Name { get; set; }
+        public string Platform { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
         public string HeaderHex { get; set; }
+        public long HeaderOffset { get; set; }
         public string FooterHex { get; set; }
         public long MaxSearchLength { get; set; } = 0x200000;
         public string Extension { get; set; } = ".bin";

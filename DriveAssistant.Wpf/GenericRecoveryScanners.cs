@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using FATX.Analyzers.Signatures;
 
 namespace FATXTools.Wpf;
 
@@ -32,6 +33,7 @@ public sealed class GenericFileCarver
     private readonly long _displayBaseOffset;
     private readonly long _interval;
     private readonly string _sourceName;
+    private readonly List<CustomSignatureDefinition> _customSignatures = [];
 
     public GenericFileCarver(string sourcePath, long scanStart, long scanLength, long displayBaseOffset, long interval, string sourceName)
     {
@@ -41,6 +43,33 @@ public sealed class GenericFileCarver
         _displayBaseOffset = displayBaseOffset;
         _interval = Math.Max(1, interval);
         _sourceName = sourceName;
+    }
+
+    public void SetCustomSignatures(IEnumerable<CustomSignatureDefinition>? definitions)
+    {
+        _customSignatures.Clear();
+        if (definitions == null)
+        {
+            return;
+        }
+
+        foreach (var definition in definitions)
+        {
+            if (definition == null || !definition.Enabled)
+            {
+                continue;
+            }
+
+            try
+            {
+                _ = definition.GetHeaderBytes();
+                _customSignatures.Add(definition);
+            }
+            catch
+            {
+                // Invalid user entries are ignored by the generic raw carver.
+            }
+        }
     }
 
     public List<GenericCarvedFile> Analyze(CancellationToken cancellationToken, IProgress<int>? progress)
@@ -82,6 +111,7 @@ public sealed class GenericFileCarver
                 try
                 {
                     match = TryMatch(stream, absoluteOffset, readableLength - relative, buffer.AsSpan((int)localRelative, headerLength));
+                    match ??= TryMatchCustom(readableLength - relative, buffer.AsSpan((int)localRelative, headerLength));
                 }
                 catch
                 {
@@ -125,12 +155,55 @@ public sealed class GenericFileCarver
 
     private static GenericCarverMatch? TryMatch(FileStream stream, long absoluteOffset, long remainingLength, ReadOnlySpan<byte> header)
     {
-        return TryMatchPs3(header, stream, absoluteOffset, remainingLength)
+        return TryMatchPlayStation(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchXbox(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchCommon(header, stream, absoluteOffset, remainingLength);
     }
 
-    private static GenericCarverMatch? TryMatchPs3(ReadOnlySpan<byte> header, FileStream stream, long absoluteOffset, long remainingLength)
+    private GenericCarverMatch? TryMatchCustom(long remainingLength, ReadOnlySpan<byte> header)
+    {
+        foreach (var definition in _customSignatures)
+        {
+            var headerOffset = definition.HeaderOffset;
+            if (headerOffset < 0 || headerOffset > int.MaxValue || headerOffset >= header.Length)
+            {
+                continue;
+            }
+
+            var magic = definition.GetHeaderBytes();
+            var start = (int)headerOffset;
+            if (magic.Length == 0 || start + magic.Length > header.Length)
+            {
+                continue;
+            }
+
+            if (!header.Slice(start, magic.Length).SequenceEqual(magic))
+            {
+                continue;
+            }
+
+            var extension = string.IsNullOrWhiteSpace(definition.Extension) ? ".bin" : definition.Extension;
+            if (!extension.StartsWith(".", StringComparison.Ordinal))
+            {
+                extension = "." + extension;
+            }
+
+            var size = definition.MaxSearchLength > 0
+                ? Math.Min(remainingLength, Math.Max(definition.MaxSearchLength, headerOffset + magic.Length))
+                : Math.Min(remainingLength, headerOffset + magic.Length);
+            var label = string.IsNullOrWhiteSpace(definition.Description)
+                ? "Custom file carver signature"
+                : definition.Description;
+            var detail = string.IsNullOrWhiteSpace(definition.Platform)
+                ? label
+                : $"{definition.Platform}: {label}";
+            return new GenericCarverMatch(definition.Name ?? string.Empty, extension, size, detail);
+        }
+
+        return null;
+    }
+
+    private static GenericCarverMatch? TryMatchPlayStation(ReadOnlySpan<byte> header, FileStream stream, long absoluteOffset, long remainingLength)
     {
         if (StartsWith(header, "SCE\0"u8) && header.Length >= 0x20)
         {
@@ -139,7 +212,7 @@ public sealed class GenericFileCarver
             var size = checked((long)Math.Min((ulong)long.MaxValue, headerLength + bodyLength));
             if (size > 0)
             {
-                return new GenericCarverMatch(string.Empty, ".self", size, "PS3 SELF executable");
+                return new GenericCarverMatch(string.Empty, ".self", size, "PlayStation SELF/PRX executable");
             }
         }
 
@@ -150,7 +223,7 @@ public sealed class GenericFileCarver
 
         if (StartsWith(header, "SCEUF\0\0"u8))
         {
-            return new GenericCarverMatch(string.Empty, ".pup", EstimateUnknownSize(remainingLength), "PS3 PUP update package; size is estimated");
+            return new GenericCarverMatch(string.Empty, ".pup", EstimateUnknownSize(remainingLength), "PlayStation PUP update package; size is estimated");
         }
 
         if (StartsWith(header, "\0PSF"u8) && header.Length >= 0x14)
@@ -161,8 +234,19 @@ public sealed class GenericFileCarver
             var size = TryGetSfoSize(stream, absoluteOffset, keyTableStart, dataTableStart, entryCount, remainingLength);
             if (size > 0)
             {
-                return new GenericCarverMatch("PARAM", ".sfo", size, "PS3 SFO metadata");
+                return new GenericCarverMatch("PARAM", ".sfo", size, "PlayStation SFO metadata");
             }
+        }
+
+        if (StartsWith(header, "\x7F"u8) && header.Length >= 4 && header[1] == (byte)'C' && header[2] == (byte)'N' && header[3] == (byte)'T')
+        {
+            var size = TryGetPs4PkgSize(header, remainingLength);
+            return new GenericCarverMatch(string.Empty, ".pkg", size > 0 ? size : EstimateUnknownSize(remainingLength), "PS4 package (PKG)");
+        }
+
+        if (StartsWith(header, "PFSC"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".pfs", EstimateUnknownSize(remainingLength), "PS4 PFS container; size is estimated");
         }
 
         if (header.Length >= 4 && ReadUInt32BigEndian(header) == 0xDCA24D00)
@@ -191,7 +275,7 @@ public sealed class GenericFileCarver
             };
             var dataLength = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64BigEndian(header[0x98..])));
             var size = dataLength > 0 ? Math.Min(remainingLength, 0x100 + dataLength) : EstimateUnknownSize(remainingLength);
-            return new GenericCarverMatch(string.Empty, extension, size, "PS3 NPD/EDAT/SDAT content");
+            return new GenericCarverMatch(string.Empty, extension, size, "PlayStation NPD/EDAT/SDAT content");
         }
 
         return null;
@@ -429,6 +513,25 @@ public sealed class GenericFileCarver
 
         var size = (long)dataTableStart + lastDataOffset + lastDataSize;
         return size > 0 && size <= remainingLength ? size : 0;
+    }
+
+    private static long TryGetPs4PkgSize(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        foreach (var offset in new[] { 0x18, 0x20, 0x28 })
+        {
+            if (header.Length < offset + 8)
+            {
+                continue;
+            }
+
+            var candidate = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64BigEndian(header[offset..])));
+            if (candidate >= 0x400 && candidate <= remainingLength)
+            {
+                return candidate;
+            }
+        }
+
+        return 0;
     }
 
     private static long TryGetXexSize(FileStream stream, long absoluteOffset, uint securityOffset, long remainingLength)
@@ -792,6 +895,178 @@ public sealed record Ps3DirectoryEntry(
     ushort RecordLength,
     byte FileType,
     byte NameLength);
+
+public sealed record PlayStationMetadataEntry(
+    string Name,
+    string Kind,
+    long Offset,
+    uint Inode,
+    ushort RecordLength,
+    byte FileType,
+    byte NameLength,
+    bool IsDeleted,
+    string MetadataStatus,
+    long Size = 0,
+    int DataOffsetCount = 0,
+    int DataRunCount = 0,
+    long LargestRunBytes = 0,
+    string FragmentationStatus = "",
+    string DataRanges = "",
+    string DataOffsets = "");
+
+public sealed class Ps4UfsDirentScanner
+{
+    private const int DirectoryBlockSize = 0x1000;
+
+    private static readonly IReadOnlyDictionary<byte, string> FileTypes = new Dictionary<byte, string>
+    {
+        [0] = "Unknown",
+        [1] = "FIFO",
+        [2] = "Character Device",
+        [4] = "Directory",
+        [6] = "Block Device",
+        [8] = "File",
+        [10] = "Symbolic Link",
+        [12] = "Socket",
+        [14] = "Whiteout"
+    };
+
+    private readonly string _sourcePath;
+    private readonly long _displayBaseOffset;
+
+    public Ps4UfsDirentScanner(string sourcePath, long displayBaseOffset)
+    {
+        _sourcePath = sourcePath;
+        _displayBaseOffset = displayBaseOffset;
+    }
+
+    public List<PlayStationMetadataEntry> Analyze(CancellationToken cancellationToken, IProgress<int>? progress)
+    {
+        var rows = new List<PlayStationMetadataEntry>();
+        using var stream = new FileStream(_sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.SequentialScan);
+        var steps = Math.Max(1L, stream.Length / DirectoryBlockSize);
+        var progressEvery = Math.Max(1L, steps / 500);
+        var block = new byte[DirectoryBlockSize];
+
+        for (long offset = 0, step = 0; offset + 0x20 < stream.Length; offset += DirectoryBlockSize, step++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            stream.Position = offset;
+            var read = stream.Read(block, 0, block.Length);
+            if (read < 0x20)
+            {
+                break;
+            }
+
+            rows.AddRange(ReadDirectoryBlock(block.AsSpan(0, read), _displayBaseOffset + offset));
+
+            if (step % progressEvery == 0)
+            {
+                progress?.Report((int)Math.Min(int.MaxValue, step));
+            }
+        }
+
+        progress?.Report((int)Math.Min(int.MaxValue, steps));
+        return rows;
+    }
+
+    private static List<PlayStationMetadataEntry> ReadDirectoryBlock(ReadOnlySpan<byte> block, long displayBlockOffset)
+    {
+        var first = ParseHeader(block);
+        if (first.FileType != 4 || first.NameLength != 1 || !NameEquals(block, 8, first.NameLength, ".") || !IsValidRecord(first, block.Length))
+        {
+            return [];
+        }
+
+        var secondOffset = first.RecordLength;
+        if (secondOffset + 8 >= block.Length)
+        {
+            return [];
+        }
+
+        var second = ParseHeader(block[secondOffset..]);
+        if (second.FileType != 4 || second.NameLength != 2 || !NameEquals(block, secondOffset + 8, second.NameLength, "..") || !IsValidRecord(second, block.Length - secondOffset))
+        {
+            return [];
+        }
+
+        var rows = new List<PlayStationMetadataEntry>();
+        var cursor = 0;
+        var seen = 0;
+        while (cursor + 8 <= block.Length && seen++ < 4096)
+        {
+            var record = ParseHeader(block[cursor..]);
+            if (!IsValidRecord(record, block.Length - cursor))
+            {
+                break;
+            }
+
+            var name = ReadDirentName(block, cursor + 8, record.NameLength);
+            if (!string.IsNullOrWhiteSpace(name) && name != "." && name != "..")
+            {
+                var deleted = record.Inode == 0;
+                var kind = FileTypes.TryGetValue(record.FileType, out var value) ? value : "Unknown";
+                rows.Add(new PlayStationMetadataEntry(
+                    name,
+                    kind,
+                    displayBlockOffset + cursor,
+                    record.Inode,
+                    record.RecordLength,
+                    record.FileType,
+                    record.NameLength,
+                    deleted,
+                    deleted ? "Deleted PS4 UFS dirent candidate" : "Active PS4 UFS dirent"));
+            }
+
+            cursor += record.RecordLength;
+        }
+
+        return rows;
+    }
+
+    private static (uint Inode, ushort RecordLength, byte FileType, byte NameLength) ParseHeader(ReadOnlySpan<byte> header)
+    {
+        var inode = (uint)(header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24));
+        var recordLength = (ushort)(header[4] | (header[5] << 8));
+        return (inode, recordLength, header[6], header[7]);
+    }
+
+    private static bool IsValidRecord((uint Inode, ushort RecordLength, byte FileType, byte NameLength) record, int remaining)
+    {
+        var minimumLength = 8 + record.NameLength;
+        minimumLength = (minimumLength + 3) & ~3;
+        return record.RecordLength >= minimumLength &&
+               record.RecordLength <= remaining &&
+               record.RecordLength % 4 == 0 &&
+               record.NameLength <= 255 &&
+               FileTypes.ContainsKey(record.FileType);
+    }
+
+    private static string ReadDirentName(ReadOnlySpan<byte> block, int offset, int length)
+    {
+        if (length <= 0 || offset < 0 || offset + length > block.Length)
+        {
+            return string.Empty;
+        }
+
+        var nameBytes = block.Slice(offset, length);
+        foreach (var value in nameBytes)
+        {
+            if (value < 0x20 || value > 0x7E || value == (byte)'/')
+            {
+                return string.Empty;
+            }
+        }
+
+        return Encoding.ASCII.GetString(nameBytes);
+    }
+
+    private static bool NameEquals(ReadOnlySpan<byte> block, int offset, int length, string expected)
+    {
+        return ReadDirentName(block, offset, length).Equals(expected, StringComparison.Ordinal);
+    }
+}
 
 public sealed class Ps3DirentScanner
 {

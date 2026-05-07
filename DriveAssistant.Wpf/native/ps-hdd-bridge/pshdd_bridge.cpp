@@ -6,9 +6,15 @@
 #include <vfs/directory.hpp>
 #include <vfs/file.hpp>
 #include <vfs/node.hpp>
+#include <vfs/adapters/ufs/types.h>
+#include <vfs/adapters/ufs/ffs/fs.h>
+#include <vfs/adapters/ufs/ufs/dinode.h>
 
 #ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 
@@ -21,6 +27,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #ifdef PSHDD_BRIDGE_EXPORTS
@@ -30,6 +37,8 @@
 #endif
 
 using ProgressCallback = void(__cdecl*)(int percent, const char* stage, const char* message);
+using ReadCallback = uint64_t(__cdecl*)(void* context, uint64_t offset, char* data, uint32_t length);
+using LengthCallback = uint64_t(__cdecl*)(void* context);
 
 namespace {
 
@@ -71,6 +80,86 @@ struct RecoverySummary
   size_t fullyFragmentedFiles = 0;
   uint64_t bytesWritten = 0;
   std::vector<std::string> failures;
+};
+
+struct UfsDataExtent
+{
+  uint64_t offset = 0;
+  uint64_t length = 0;
+};
+
+struct UfsOrphanInode
+{
+  uint32_t inodeNumber = 0;
+  uint16_t mode = 0;
+  int16_t linkCount = 0;
+  uint64_t size = 0;
+  uint64_t blocks = 0;
+  int64_t created = 0;
+  int64_t modified = 0;
+  int64_t accessed = 0;
+  uint64_t inodeOffset = 0;
+  uint64_t dataOffsetCount = 0;
+  uint64_t dataRunCount = 0;
+  uint64_t largestRunBytes = 0;
+  uint64_t estimatedAllocationUnit = kDefaultEstimatedAllocationUnit;
+  std::string dataRanges;
+  std::vector<UfsDataExtent> extents;
+};
+
+OffsetMetrics calculateOffsetMetrics(const std::vector<uint64_t>& dataOffsets, bool isDirectory);
+
+class CallbackDiskStream final : public io::stream::DiskStream
+{
+public:
+  CallbackDiskStream(void* context, ReadCallback readCallback, LengthCallback lengthCallback)
+    : context(context), readCallback(readCallback), lengthCallback(lengthCallback), position(0)
+  {
+  }
+
+  uint64_t read(char* data, uint32_t length) override
+  {
+    if (!readCallback || length == 0) {
+      return 0;
+    }
+
+    const auto readLength = readCallback(context, position, data, length);
+    position += readLength;
+    return readLength;
+  }
+
+  uint64_t seek(int64_t offset, uint32_t whence = 0) override
+  {
+    int64_t next = 0;
+    if (whence == 1) {
+      next = static_cast<int64_t>(position) + offset;
+    }
+    else if (whence == 2) {
+      next = static_cast<int64_t>(getLength()) + offset;
+    }
+    else {
+      next = offset;
+    }
+
+    position = next <= 0 ? 0 : static_cast<uint64_t>(next);
+    return position;
+  }
+
+  uint64_t tell() override
+  {
+    return position;
+  }
+
+  uint64_t getLength() const override
+  {
+    return lengthCallback ? lengthCallback(context) : 0;
+  }
+
+private:
+  void* context;
+  ReadCallback readCallback;
+  LengthCallback lengthCallback;
+  uint64_t position;
 };
 
 void reportProgress(int percent, const std::string& stage, const std::string& message)
@@ -140,6 +229,47 @@ std::unique_ptr<disk::Disk> openDisk(const std::string& imagePath, const std::st
   return std::unique_ptr<disk::Disk>(rawDisk);
 }
 
+std::unique_ptr<disk::Disk> openDiskFromStream(
+  const std::string& label,
+  const std::string& keyPath,
+  io::stream::DiskStream* stream)
+{
+  auto keyData = readAllBytes(keyPath);
+
+  disk::DiskConfig config;
+  config.setKeys(keyData.data(), static_cast<uint32_t>(keyData.size()));
+  config.setStream(stream);
+
+  disk::Disk* rawDisk = formats::DiskFormatFactory::getInstance()->detectFormat(&config);
+  if (!rawDisk) {
+    throw std::runtime_error("Could not detect PlayStation disk format from virtual image stream. Check the HDD image and key file: " + label);
+  }
+
+  if (rawDisk->getPartitions().empty()) {
+    delete rawDisk;
+    throw std::runtime_error("Could not find any partitions in this PlayStation disk: " + label);
+  }
+
+  return std::unique_ptr<disk::Disk>(rawDisk);
+}
+
+std::unique_ptr<disk::Disk> openDiskFromCallbacks(
+  const std::string& label,
+  const std::string& keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback)
+{
+  if (!context || !readCallback || !lengthCallback) {
+    throw std::runtime_error("Virtual disk callbacks are required.");
+  }
+
+  return openDiskFromStream(
+    label,
+    keyPath,
+    new CallbackDiskStream(context, readCallback, lengthCallback));
+}
+
 disk::Partition* findPartition(disk::Disk* disk, const std::string& partitionName)
 {
   auto partitionNameCopy = partitionName;
@@ -164,6 +294,27 @@ std::vector<uint64_t> getOrderedOffsets(vfs::VfsNode* node, const char* key)
 {
   std::string keyCopy(key);
   return node->getOrderedOffsets(keyCopy);
+}
+
+std::string listPartitionsFromDisk(disk::Disk* disk)
+{
+  std::ostringstream output;
+
+  output << std::setw(26) << std::left << "Partition Name"
+         << std::setw(16) << std::left << "Start"
+         << std::setw(16) << std::left << "End"
+         << std::setw(16) << std::left << "Length"
+         << '\n';
+
+  for (auto partition : disk->getPartitions()) {
+    output << std::setw(26) << std::left << partition->getName()
+           << std::setw(16) << std::left << std::hex << partition->getStart()
+           << std::setw(16) << std::left << std::hex << partition->getEnd()
+           << std::setw(16) << std::left << std::hex << partition->getLength()
+           << '\n';
+  }
+
+  return output.str();
 }
 
 bool directoryExists(const std::string& path)
@@ -297,6 +448,232 @@ uint64_t estimateReadUnit(const std::vector<uint64_t>& sortedOffsets, uint64_t f
   }
 
   return unit == 0 ? kDefaultEstimatedAllocationUnit : unit;
+}
+
+uint16_t swap16Value(uint16_t value)
+{
+  return static_cast<uint16_t>((value >> 8) | (value << 8));
+}
+
+uint32_t swap32Value(uint32_t value)
+{
+  return ((value & 0x000000FFu) << 24) |
+         ((value & 0x0000FF00u) << 8) |
+         ((value & 0x00FF0000u) >> 8) |
+         ((value & 0xFF000000u) >> 24);
+}
+
+uint64_t swap64Value(uint64_t value)
+{
+  return (static_cast<uint64_t>(swap32Value(static_cast<uint32_t>(value))) << 32) |
+         swap32Value(static_cast<uint32_t>(value >> 32));
+}
+
+int16_t maybeSwapInt16(int16_t value, bool swap)
+{
+  return swap ? static_cast<int16_t>(swap16Value(static_cast<uint16_t>(value))) : value;
+}
+
+int32_t maybeSwapInt32(int32_t value, bool swap)
+{
+  return swap ? static_cast<int32_t>(swap32Value(static_cast<uint32_t>(value))) : value;
+}
+
+int64_t maybeSwapInt64(int64_t value, bool swap)
+{
+  return swap ? static_cast<int64_t>(swap64Value(static_cast<uint64_t>(value))) : value;
+}
+
+uint16_t maybeSwapUInt16(uint16_t value, bool swap)
+{
+  return swap ? swap16Value(value) : value;
+}
+
+uint32_t maybeSwapUInt32(uint32_t value, bool swap)
+{
+  return swap ? swap32Value(value) : value;
+}
+
+uint64_t maybeSwapUInt64(uint64_t value, bool swap)
+{
+  return swap ? swap64Value(value) : value;
+}
+
+void normalizeUfsSuperblock(fs& super, bool swap)
+{
+  if (!swap) {
+    return;
+  }
+
+  super.fs_ncg = maybeSwapUInt32(super.fs_ncg, true);
+  super.fs_bsize = maybeSwapInt32(super.fs_bsize, true);
+  super.fs_fsize = maybeSwapInt32(super.fs_fsize, true);
+  super.fs_frag = maybeSwapInt32(super.fs_frag, true);
+  super.fs_fragshift = maybeSwapInt32(super.fs_fragshift, true);
+  super.fs_fsbtodb = maybeSwapInt32(super.fs_fsbtodb, true);
+  super.fs_nindir = maybeSwapInt32(super.fs_nindir, true);
+  super.fs_inopb = maybeSwapUInt32(super.fs_inopb, true);
+  super.fs_ipg = maybeSwapUInt32(super.fs_ipg, true);
+  super.fs_fpg = maybeSwapInt32(super.fs_fpg, true);
+  super.fs_iblkno = maybeSwapInt32(super.fs_iblkno, true);
+  super.fs_magic = maybeSwapInt32(super.fs_magic, true);
+}
+
+ufs2_dinode normalizeUfsInode(const ufs2_dinode& source, bool swap)
+{
+  auto inode = source;
+  if (!swap) {
+    return inode;
+  }
+
+  inode.di_mode = maybeSwapUInt16(inode.di_mode, true);
+  inode.di_nlink = maybeSwapInt16(inode.di_nlink, true);
+  inode.di_size = maybeSwapUInt64(inode.di_size, true);
+  inode.di_blocks = maybeSwapUInt64(inode.di_blocks, true);
+  inode.di_atime = maybeSwapInt64(inode.di_atime, true);
+  inode.di_mtime = maybeSwapInt64(inode.di_mtime, true);
+  inode.di_ctime = maybeSwapInt64(inode.di_ctime, true);
+  inode.di_birthtime = maybeSwapInt64(inode.di_birthtime, true);
+  for (auto& block : inode.di_db) {
+    block = maybeSwapInt64(block, true);
+  }
+  for (auto& block : inode.di_ib) {
+    block = maybeSwapInt64(block, true);
+  }
+  return inode;
+}
+
+bool readProviderExact(io::data::DataProvider* provider, uint64_t offset, void* data, uint32_t length)
+{
+  provider->seek(static_cast<int64_t>(offset));
+  return provider->read(static_cast<char*>(data), length) == length;
+}
+
+uint64_t inodeOffsetFor(const fs& super, uint32_t inodeNumber)
+{
+  const auto group = inodeNumber / super.fs_ipg;
+  const auto groupInode = inodeNumber % super.fs_ipg;
+  const auto inodeBlock = cgimin(&super, group) + blkstofrags(&super, groupInode / INOPB(&super));
+  return static_cast<uint64_t>(fsbtodb(&super, inodeBlock)) * 0x200ULL +
+         static_cast<uint64_t>(groupInode % INOPB(&super)) * sizeof(ufs2_dinode);
+}
+
+bool readUfsSuperblock(io::data::DataProvider* provider, fs& super, bool& needsSwap)
+{
+  if (!readProviderExact(provider, SBLOCK_UFS2, &super, sizeof(super))) {
+    return false;
+  }
+
+  needsSwap = false;
+  if (super.fs_magic == FS_UFS2_MAGIC) {
+    return true;
+  }
+
+  if (swap32Value(static_cast<uint32_t>(super.fs_magic)) == FS_UFS2_MAGIC) {
+    needsSwap = true;
+    normalizeUfsSuperblock(super, true);
+    return true;
+  }
+
+  return false;
+}
+
+void appendExtentRun(std::vector<UfsDataExtent>& extents, uint64_t offset, uint64_t length)
+{
+  if (length == 0) {
+    return;
+  }
+
+  if (!extents.empty()) {
+    auto& previous = extents.back();
+    if (previous.offset + previous.length == offset) {
+      previous.length += length;
+      return;
+    }
+  }
+
+  extents.push_back({ offset, length });
+}
+
+void appendDataBlockExtent(std::vector<UfsDataExtent>& extents, const fs& super, uint64_t block, uint64_t& remaining)
+{
+  if (block == 0 || remaining == 0) {
+    return;
+  }
+
+  const auto offset = block * static_cast<uint64_t>(super.fs_fsize);
+  const auto length = std::min<uint64_t>(static_cast<uint64_t>(super.fs_bsize), remaining);
+  appendExtentRun(extents, offset, length);
+  remaining -= length;
+}
+
+void collectIndirectExtents(
+  io::data::DataProvider* provider,
+  const fs& super,
+  bool needsSwap,
+  uint64_t tableBlock,
+  int level,
+  uint64_t& remaining,
+  std::vector<UfsDataExtent>& extents,
+  std::vector<uint64_t>& blockTables)
+{
+  if (tableBlock == 0 || level <= 0 || remaining == 0 || super.fs_bsize <= 0 || super.fs_nindir <= 0) {
+    return;
+  }
+
+  const auto tableOffset = tableBlock * static_cast<uint64_t>(super.fs_fsize);
+  blockTables.push_back(tableOffset);
+  std::vector<uint64_t> table(static_cast<size_t>(super.fs_bsize) / sizeof(uint64_t));
+  if (!readProviderExact(provider, tableOffset, table.data(), static_cast<uint32_t>(super.fs_bsize))) {
+    return;
+  }
+
+  const auto count = std::min<int32_t>(super.fs_nindir, static_cast<int32_t>(table.size()));
+  for (int32_t index = 0; index < count && remaining > 0; ++index) {
+    auto block = needsSwap ? swap64Value(table[index]) : table[index];
+    if (block == 0) {
+      break;
+    }
+
+    if (level == 1) {
+      appendDataBlockExtent(extents, super, block, remaining);
+    }
+    else {
+      collectIndirectExtents(provider, super, needsSwap, block, level - 1, remaining, extents, blockTables);
+    }
+  }
+}
+
+std::vector<UfsDataExtent> collectInodeExtents(
+  io::data::DataProvider* provider,
+  const fs& super,
+  bool needsSwap,
+  const ufs2_dinode& inode,
+  std::vector<uint64_t>& blockTables)
+{
+  std::vector<UfsDataExtent> extents;
+  uint64_t remaining = inode.di_size;
+  for (auto block : inode.di_db) {
+    appendDataBlockExtent(extents, super, static_cast<uint64_t>(block), remaining);
+    if (block == 0 || remaining == 0) {
+      break;
+    }
+  }
+
+  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[0]), 1, remaining, extents, blockTables);
+  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[1]), 2, remaining, extents, blockTables);
+  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[2]), 3, remaining, extents, blockTables);
+  return extents;
+}
+
+OffsetMetrics calculateExtentMetrics(const std::vector<UfsDataExtent>& extents, bool isDirectory)
+{
+  std::vector<uint64_t> offsets;
+  offsets.reserve(extents.size());
+  for (const auto& extent : extents) {
+    offsets.push_back(extent.offset);
+  }
+  return calculateOffsetMetrics(offsets, isDirectory);
 }
 
 OffsetMetrics calculateOffsetMetrics(const std::vector<uint64_t>& dataOffsets, bool isDirectory)
@@ -616,30 +993,14 @@ std::string listPartitions(const std::string& imagePath, const std::string& keyP
   reportProgress(0, "Opening image", imagePath);
   auto disk = openDisk(imagePath, keyPath);
   reportProgress(75, "Reading partition table", "Listing PlayStation partitions");
-  std::ostringstream output;
-
-  output << std::setw(26) << std::left << "Partition Name"
-         << std::setw(16) << std::left << "Start"
-         << std::setw(16) << std::left << "End"
-         << std::setw(16) << std::left << "Length"
-         << '\n';
-
-  for (auto partition : disk->getPartitions()) {
-    output << std::setw(26) << std::left << partition->getName()
-           << std::setw(16) << std::left << std::hex << partition->getStart()
-           << std::setw(16) << std::left << std::hex << partition->getEnd()
-           << std::setw(16) << std::left << std::hex << partition->getLength()
-           << '\n';
-  }
-
+  auto output = listPartitionsFromDisk(disk.get());
   reportProgress(100, "Complete", "Partition list loaded");
-  return output.str();
+  return output;
 }
 
-std::string displayPartition(const std::string& imagePath, const std::string& keyPath, const std::string& partitionName)
+std::string displayPartitionFromDisk(disk::Disk* disk, const std::string& partitionName)
 {
-  auto disk = openDisk(imagePath, keyPath);
-  auto partition = findPartition(disk.get(), partitionName);
+  auto partition = findPartition(disk, partitionName);
 
   partition->mount();
   auto vfs = partition->getVfs();
@@ -656,12 +1017,17 @@ std::string displayPartition(const std::string& imagePath, const std::string& ke
   return output.str();
 }
 
-std::string listFilesJson(const std::string& imagePath, const std::string& keyPath, const std::string& partitionName)
+std::string displayPartition(const std::string& imagePath, const std::string& keyPath, const std::string& partitionName)
 {
   reportProgress(0, "Opening image", imagePath);
   auto disk = openDisk(imagePath, keyPath);
+  return displayPartitionFromDisk(disk.get(), partitionName);
+}
+
+std::string listFilesJsonFromDisk(disk::Disk* disk, const std::string& partitionName)
+{
   reportProgress(15, "Detecting format", "PlayStation disk format detected");
-  auto partition = findPartition(disk.get(), partitionName);
+  auto partition = findPartition(disk, partitionName);
 
   reportProgress(-1, "Mounting file system", partitionName);
   partition->mount();
@@ -691,9 +1057,15 @@ std::string listFilesJson(const std::string& imagePath, const std::string& keyPa
   return output.str();
 }
 
-std::string decryptPartition(
-  const std::string& imagePath,
-  const std::string& keyPath,
+std::string listFilesJson(const std::string& imagePath, const std::string& keyPath, const std::string& partitionName)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return listFilesJsonFromDisk(disk.get(), partitionName);
+}
+
+std::string decryptPartitionFromDisk(
+  disk::Disk* disk,
   const std::string& partitionName,
   const std::string& outputPath)
 {
@@ -701,9 +1073,7 @@ std::string decryptPartition(
     throw std::runtime_error("Output path is required.");
   }
 
-  reportProgress(0, "Opening image", imagePath);
-  auto disk = openDisk(imagePath, keyPath);
-  auto partition = findPartition(disk.get(), partitionName);
+  auto partition = findPartition(disk, partitionName);
   reportProgress(10, "Exporting partition", partitionName);
 
   std::ofstream file(outputPath, std::ios::binary | std::ios::trunc);
@@ -743,6 +1113,17 @@ std::string decryptPartition(
           << " (" << written << " bytes).";
   reportProgress(100, "Complete", message.str());
   return message.str();
+}
+
+std::string decryptPartition(
+  const std::string& imagePath,
+  const std::string& keyPath,
+  const std::string& partitionName,
+  const std::string& outputPath)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return decryptPartitionFromDisk(disk.get(), partitionName, outputPath);
 }
 
 FileWriteResult writeFileNode(disk::Partition* partition, vfs::VfsNode* node, const std::string& outputPath)
@@ -818,9 +1199,8 @@ FileWriteResult writeFileNode(disk::Partition* partition, vfs::VfsNode* node, co
   return result;
 }
 
-std::string exportFile(
-  const std::string& imagePath,
-  const std::string& keyPath,
+std::string exportFileFromDisk(
+  disk::Disk* disk,
   const std::string& partitionName,
   const std::string& filePath,
   const std::string& outputPath)
@@ -829,9 +1209,7 @@ std::string exportFile(
     throw std::runtime_error("File path and output path are required.");
   }
 
-  reportProgress(0, "Opening image", imagePath);
-  auto disk = openDisk(imagePath, keyPath);
-  auto partition = findPartition(disk.get(), partitionName);
+  auto partition = findPartition(disk, partitionName);
 
   reportProgress(-1, "Mounting file system", partitionName);
   partition->mount();
@@ -853,6 +1231,18 @@ std::string exportFile(
           << " (" << result.bytesWritten << " bytes).";
   reportProgress(100, "Complete", message.str());
   return message.str();
+}
+
+std::string exportFile(
+  const std::string& imagePath,
+  const std::string& keyPath,
+  const std::string& partitionName,
+  const std::string& filePath,
+  const std::string& outputPath)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return exportFileFromDisk(disk.get(), partitionName, filePath, outputPath);
 }
 
 void recoverDirectory(
@@ -917,9 +1307,8 @@ void recoverDirectory(
   }
 }
 
-std::string recoverFilesJson(
-  const std::string& imagePath,
-  const std::string& keyPath,
+std::string recoverFilesJsonFromDisk(
+  disk::Disk* disk,
   const std::string& partitionName,
   const std::string& outputRoot)
 {
@@ -927,10 +1316,8 @@ std::string recoverFilesJson(
     throw std::runtime_error("Output directory is required.");
   }
 
-  reportProgress(0, "Opening image", imagePath);
   ensureDirectory(outputRoot);
-  auto disk = openDisk(imagePath, keyPath);
-  auto partition = findPartition(disk.get(), partitionName);
+  auto partition = findPartition(disk, partitionName);
   reportProgress(-1, "Mounting file system", partitionName);
   partition->mount();
   auto vfs = partition->getVfs();
@@ -970,6 +1357,273 @@ std::string recoverFilesJson(
   output << "]}";
   reportProgress(100, "Complete", "PlayStation recovery complete");
   return output.str();
+}
+
+std::string recoverFilesJson(
+  const std::string& imagePath,
+  const std::string& keyPath,
+  const std::string& partitionName,
+  const std::string& outputRoot)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return recoverFilesJsonFromDisk(disk.get(), partitionName, outputRoot);
+}
+
+std::vector<UfsOrphanInode> scanOrphanInodes(disk::Partition* partition)
+{
+  reportProgress(-1, "Mounting file system", partition->getName());
+  partition->mount();
+  auto provider = partition->getDataProvider();
+  fs super{};
+  bool needsSwap = false;
+  if (!readUfsSuperblock(provider, super, needsSwap)) {
+    throw std::runtime_error("Selected PlayStation partition is not a readable UFS2 file system.");
+  }
+
+  if (super.fs_ncg == 0 || super.fs_ipg == 0 || super.fs_fsize <= 0 || super.fs_bsize <= 0 ||
+      super.fs_ncg > 100000 || super.fs_ipg > 10000000) {
+    throw std::runtime_error("UFS2 superblock values are outside expected bounds.");
+  }
+
+  const auto totalInodes64 = static_cast<uint64_t>(super.fs_ncg) * static_cast<uint64_t>(super.fs_ipg);
+  const auto totalInodes = static_cast<uint32_t>(std::min<uint64_t>(totalInodes64, UINT32_MAX));
+  std::vector<UfsOrphanInode> rows;
+  const auto progressEvery = std::max<uint32_t>(1, totalInodes / 500);
+  std::unordered_set<uint64_t> seenSignatures;
+
+  for (uint32_t inodeNumber = 2; inodeNumber < totalInodes; ++inodeNumber) {
+    if (inodeNumber % progressEvery == 0) {
+      const auto percent = static_cast<int>((static_cast<uint64_t>(inodeNumber) * 90) / std::max<uint32_t>(1, totalInodes));
+      reportProgress(percent, "Scanning deleted UFS inodes", std::to_string(inodeNumber));
+    }
+
+    const auto inodeOffset = inodeOffsetFor(super, inodeNumber);
+    ufs2_dinode rawInode{};
+    if (!readProviderExact(provider, inodeOffset, &rawInode, sizeof(rawInode))) {
+      continue;
+    }
+
+    const auto inode = normalizeUfsInode(rawInode, needsSwap);
+    const auto modeType = inode.di_mode & IFMT;
+    if (modeType != IFREG || inode.di_nlink != 0 || inode.di_size == 0 || inode.di_size > partition->getLength()) {
+      continue;
+    }
+
+    bool hasBlock = false;
+    for (auto block : inode.di_db) {
+      if (block > 0) {
+        hasBlock = true;
+        break;
+      }
+    }
+    if (!hasBlock && inode.di_ib[0] <= 0 && inode.di_ib[1] <= 0 && inode.di_ib[2] <= 0) {
+      continue;
+    }
+
+    std::vector<uint64_t> blockTables;
+    auto extents = collectInodeExtents(provider, super, needsSwap, inode, blockTables);
+    if (extents.empty()) {
+      continue;
+    }
+
+    const auto signature = (extents.front().offset << 16) ^ inode.di_size ^ inodeNumber;
+    if (!seenSignatures.insert(signature).second) {
+      continue;
+    }
+
+    const auto metrics = calculateExtentMetrics(extents, false);
+    UfsOrphanInode row;
+    row.inodeNumber = inodeNumber;
+    row.mode = inode.di_mode;
+    row.linkCount = inode.di_nlink;
+    row.size = inode.di_size;
+    row.blocks = inode.di_blocks;
+    row.created = inode.di_birthtime;
+    row.modified = inode.di_mtime;
+    row.accessed = inode.di_atime;
+    row.inodeOffset = inodeOffset;
+    row.dataOffsetCount = extents.size();
+    row.dataRunCount = metrics.dataRunCount;
+    row.largestRunBytes = metrics.largestRunBytes;
+    row.estimatedAllocationUnit = metrics.estimatedAllocationUnit;
+    row.dataRanges = metrics.dataRanges;
+    row.extents = std::move(extents);
+    rows.push_back(std::move(row));
+  }
+
+  reportProgress(100, "Complete", "Deleted UFS inode scan complete");
+  return rows;
+}
+
+std::string listDeletedInodesJsonFromDisk(disk::Disk* disk, const std::string& partitionName)
+{
+  auto partition = findPartition(disk, partitionName);
+  auto rows = scanOrphanInodes(partition);
+
+  std::ostringstream output;
+  output << "{\"partition\":";
+  appendJsonEscaped(output, partitionName);
+  output << ",\"files\":[";
+  for (size_t index = 0; index < rows.size(); ++index) {
+    const auto& row = rows[index];
+    if (index > 0) {
+      output << ',';
+    }
+
+    std::vector<uint64_t> offsets;
+    offsets.reserve(std::min<size_t>(row.extents.size(), 4096));
+    for (size_t extentIndex = 0; extentIndex < row.extents.size() && extentIndex < 4096; ++extentIndex) {
+      offsets.push_back(row.extents[extentIndex].offset);
+    }
+
+    output << '{';
+    output << "\"inode\":" << row.inodeNumber;
+    output << ",\"path\":";
+    appendJsonEscaped(output, "/.deleted/inode_" + std::to_string(row.inodeNumber));
+    output << ",\"name\":";
+    appendJsonEscaped(output, "inode_" + std::to_string(row.inodeNumber) + ".bin");
+    output << ",\"type\":\"Deleted UFS inode\"";
+    output << ",\"size\":" << row.size;
+    output << ",\"created\":";
+    appendJsonEscaped(output, formatDateTime(nullptr));
+    output << ",\"modifiedUnix\":" << row.modified;
+    output << ",\"accessedUnix\":" << row.accessed;
+    output << ",\"inodeOffset\":";
+    appendJsonEscaped(output, formatHex(row.inodeOffset));
+    output << ",\"dataOffsetCount\":" << row.dataOffsetCount;
+    output << ",\"dataRunCount\":" << row.dataRunCount;
+    output << ",\"largestRunBytes\":" << row.largestRunBytes;
+    output << ",\"estimatedAllocationUnit\":" << row.estimatedAllocationUnit;
+    output << ",\"fragmentationStatus\":";
+    appendJsonEscaped(output, row.dataRunCount <= 1 ? "Contiguous" : "Fragmented");
+    output << ",\"dataRanges\":";
+    appendJsonEscaped(output, row.dataRanges);
+    output << ",\"dataOffsets\":";
+    appendJsonEscaped(output, formatOffsetArray(offsets));
+    output << '}';
+  }
+  output << "]}";
+  return output.str();
+}
+
+std::string listDeletedInodesJson(const std::string& imagePath, const std::string& keyPath, const std::string& partitionName)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return listDeletedInodesJsonFromDisk(disk.get(), partitionName);
+}
+
+UfsOrphanInode findOrphanInode(disk::Partition* partition, uint32_t inodeNumber)
+{
+  auto provider = partition->getDataProvider();
+  fs super{};
+  bool needsSwap = false;
+  if (!readUfsSuperblock(provider, super, needsSwap)) {
+    throw std::runtime_error("Selected PlayStation partition is not a readable UFS2 file system.");
+  }
+
+  const auto inodeOffset = inodeOffsetFor(super, inodeNumber);
+  ufs2_dinode rawInode{};
+  if (!readProviderExact(provider, inodeOffset, &rawInode, sizeof(rawInode))) {
+    throw std::runtime_error("Could not read UFS inode.");
+  }
+
+  const auto inode = normalizeUfsInode(rawInode, needsSwap);
+  const auto modeType = inode.di_mode & IFMT;
+  if (modeType != IFREG || inode.di_size == 0) {
+    throw std::runtime_error("Requested UFS inode is not a recoverable regular file.");
+  }
+
+  std::vector<uint64_t> blockTables;
+  auto extents = collectInodeExtents(provider, super, needsSwap, inode, blockTables);
+  if (extents.empty()) {
+    throw std::runtime_error("Requested UFS inode has no recoverable data blocks.");
+  }
+
+  UfsOrphanInode row;
+  row.inodeNumber = inodeNumber;
+  row.mode = inode.di_mode;
+  row.linkCount = inode.di_nlink;
+  row.size = inode.di_size;
+  row.blocks = inode.di_blocks;
+  row.inodeOffset = inodeOffset;
+  row.extents = std::move(extents);
+  return row;
+}
+
+std::string exportDeletedInodeFromDisk(
+  disk::Disk* disk,
+  const std::string& partitionName,
+  uint32_t inodeNumber,
+  const std::string& outputPath)
+{
+  if (outputPath.empty()) {
+    throw std::runtime_error("Output path is required.");
+  }
+
+  auto partition = findPartition(disk, partitionName);
+  partition->mount();
+  auto provider = partition->getDataProvider();
+  auto inode = findOrphanInode(partition, inodeNumber);
+  ensureDirectory(pathDirectoryName(outputPath));
+
+  std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+  if (!output.is_open()) {
+    throw std::runtime_error("Failed to open output file: " + outputPath);
+  }
+
+  constexpr uint64_t maxBufferSize = 1024 * 1024;
+  std::vector<char> buffer(static_cast<size_t>(std::min<uint64_t>(maxBufferSize, std::max<uint64_t>(1, inode.extents.front().length))));
+  uint64_t remaining = inode.size;
+  uint64_t written = 0;
+  for (const auto& extent : inode.extents) {
+    uint64_t consumed = 0;
+    auto extentRemaining = std::min(extent.length, remaining);
+    while (extentRemaining > 0) {
+      const auto request = static_cast<uint32_t>(std::min<uint64_t>(buffer.size(), extentRemaining));
+      provider->seek(static_cast<int64_t>(extent.offset + consumed));
+      const auto readLength = provider->read(buffer.data(), request);
+      if (readLength == 0) {
+        throw std::runtime_error("Unexpected end of UFS deleted inode data.");
+      }
+
+      output.write(buffer.data(), static_cast<std::streamsize>(readLength));
+      if (!output.good()) {
+        throw std::runtime_error("Failed to write deleted inode output: " + outputPath);
+      }
+
+      consumed += readLength;
+      extentRemaining -= readLength;
+      remaining -= readLength;
+      written += readLength;
+    }
+
+    if (remaining == 0) {
+      break;
+    }
+  }
+
+  if (remaining > 0) {
+    throw std::runtime_error("Not enough UFS blocks remained to fully export the deleted inode.");
+  }
+
+  std::ostringstream message;
+  message << "Exported deleted UFS inode " << inodeNumber << " to " << outputPath
+          << " (" << written << " bytes).";
+  return message.str();
+}
+
+std::string exportDeletedInode(
+  const std::string& imagePath,
+  const std::string& keyPath,
+  const std::string& partitionName,
+  uint32_t inodeNumber,
+  const std::string& outputPath)
+{
+  reportProgress(0, "Opening image", imagePath);
+  auto disk = openDisk(imagePath, keyPath);
+  return exportDeletedInodeFromDisk(disk.get(), partitionName, inodeNumber, outputPath);
 }
 
 int copyString(const std::string& value, char* buffer, int bufferLength, int* requiredBytes)
@@ -1186,7 +1840,362 @@ PSHDD_API int pshdd_recover_files_json(
   }
 }
 
+PSHDD_API int pshdd_list_deleted_inodes_json(
+  const wchar_t* imagePath,
+  const wchar_t* keyPath,
+  const wchar_t* partitionName,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto image = wideToUtf8(imagePath);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    if (image.empty() || key.empty() || partition.empty()) {
+      return copyString("Image path, key path, and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    return copyString(listDeletedInodesJson(image, key, partition), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_export_deleted_inode(
+  const wchar_t* imagePath,
+  const wchar_t* keyPath,
+  const wchar_t* partitionName,
+  uint32_t inodeNumber,
+  const wchar_t* outputPath,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto image = wideToUtf8(imagePath);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    const auto destination = wideToUtf8(outputPath);
+    if (image.empty() || key.empty() || partition.empty() || inodeNumber == 0 || destination.empty()) {
+      return copyString("Image path, key path, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    return copyString(exportDeletedInode(image, key, partition, inodeNumber, destination), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_list_partitions_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    if (key.empty()) {
+      return copyString("Key path is required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    reportProgress(75, "Reading partition table", "Listing PlayStation partitions");
+    auto text = listPartitionsFromDisk(disk.get());
+    reportProgress(100, "Complete", "Partition list loaded");
+    return copyString(text, output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_display_partition_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    if (key.empty() || partition.empty()) {
+      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(displayPartitionFromDisk(disk.get(), partition), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_list_files_json_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    if (key.empty() || partition.empty()) {
+      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(listFilesJsonFromDisk(disk.get(), partition), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_decrypt_partition_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  const wchar_t* outputPath,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    const auto destination = wideToUtf8(outputPath);
+    if (key.empty() || partition.empty() || destination.empty()) {
+      return copyString("Key path, partition name, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(decryptPartitionFromDisk(disk.get(), partition, destination), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_export_file_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  const wchar_t* filePath,
+  const wchar_t* outputPath,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    const auto source = wideToUtf8(filePath);
+    const auto destination = wideToUtf8(outputPath);
+    if (key.empty() || partition.empty() || source.empty() || destination.empty()) {
+      return copyString("Key path, partition name, file path, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(exportFileFromDisk(disk.get(), partition, source, destination), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_recover_files_json_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  const wchar_t* outputDirectory,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    const auto destination = wideToUtf8(outputDirectory);
+    if (key.empty() || partition.empty() || destination.empty()) {
+      return copyString("Key path, partition name, and output directory are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(recoverFilesJsonFromDisk(disk.get(), partition, destination), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_list_deleted_inodes_json_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    if (key.empty() || partition.empty()) {
+      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(listDeletedInodesJsonFromDisk(disk.get(), partition), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
+PSHDD_API int pshdd_export_deleted_inode_virtual(
+  const wchar_t* imageLabel,
+  const wchar_t* keyPath,
+  void* context,
+  ReadCallback readCallback,
+  LengthCallback lengthCallback,
+  const wchar_t* partitionName,
+  uint32_t inodeNumber,
+  const wchar_t* outputPath,
+  char* output,
+  int outputLength,
+  int* requiredBytes)
+{
+  try {
+    const auto label = wideToUtf8(imageLabel);
+    const auto key = wideToUtf8(keyPath);
+    const auto partition = wideToUtf8(partitionName);
+    const auto destination = wideToUtf8(outputPath);
+    if (key.empty() || partition.empty() || inodeNumber == 0 || destination.empty()) {
+      return copyString("Key path, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+        ? kBufferTooSmall
+        : kInvalidArgument;
+    }
+
+    reportProgress(0, "Opening virtual image", label);
+    auto disk = openDiskFromCallbacks(label, key, context, readCallback, lengthCallback);
+    return copyString(exportDeletedInodeFromDisk(disk.get(), partition, inodeNumber, destination), output, outputLength, requiredBytes);
+  }
+  catch (const std::exception& ex) {
+    copyString(ex.what(), output, outputLength, requiredBytes);
+    return kFailure;
+  }
+  catch (...) {
+    copyString("Unknown PS HDD bridge failure.", output, outputLength, requiredBytes);
+    return kFailure;
+  }
+}
+
 PSHDD_API int pshdd_bridge_version()
 {
-  return 5;
+  return 7;
 }

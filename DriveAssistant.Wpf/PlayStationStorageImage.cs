@@ -166,6 +166,57 @@ public sealed class PlayStationVolume
         return PlayStationNativeBridge.DecryptPartition(_imagePath, _keyPath, Name, outputPath);
     }
 
+    public IReadOnlyList<PlayStationFileEntry> ScanMetadata()
+    {
+        return GetAllEntries().ToList();
+    }
+
+    public IReadOnlyList<PlayStationMetadataEntry> ScanDeletedInodes()
+    {
+        var json = PlayStationNativeBridge.ListDeletedInodesJson(_imagePath, _keyPath, Name);
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("files", out var files) ||
+            files.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var rows = new List<PlayStationMetadataEntry>();
+        foreach (var file in files.EnumerateArray())
+        {
+            var inode = GetJsonUInt32(file, "inode");
+            if (inode == 0)
+            {
+                continue;
+            }
+
+            rows.Add(new PlayStationMetadataEntry(
+                GetJsonString(file, "name"),
+                "Deleted UFS inode",
+                ParseFirstHex(GetJsonString(file, "inodeOffset")) ?? 0,
+                inode,
+                0,
+                8,
+                0,
+                true,
+                "Deleted PS4 UFS inode with recoverable block pointers",
+                (long)Math.Min(GetJsonUInt64(file, "size"), long.MaxValue),
+                GetJsonInt32(file, "dataOffsetCount"),
+                GetJsonInt32(file, "dataRunCount"),
+                (long)Math.Min(GetJsonUInt64(file, "largestRunBytes"), long.MaxValue),
+                GetJsonString(file, "fragmentationStatus"),
+                GetJsonString(file, "dataRanges"),
+                GetJsonString(file, "dataOffsets")));
+        }
+
+        return rows;
+    }
+
+    public string ExportDeletedInode(uint inodeNumber, string outputPath)
+    {
+        return PlayStationNativeBridge.ExportDeletedInode(_imagePath, _keyPath, Name, inodeNumber, outputPath);
+    }
+
     public bool TryLoad()
     {
         if (_loadAttempted)
@@ -358,11 +409,34 @@ public sealed class PlayStationVolume
             : 0;
     }
 
+    private static uint GetJsonUInt32(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var value) && value.TryGetUInt32(out var number)
+            ? number
+            : 0;
+    }
+
     private static ulong GetJsonUInt64(JsonElement element, string propertyName)
     {
         return element.TryGetProperty(propertyName, out var value) && value.TryGetUInt64(out var number)
             ? number
             : 0;
+    }
+
+    private static long? ParseFirstHex(string text)
+    {
+        var match = Regex.Match(text ?? string.Empty, @"(?:0x)?[0-9a-fA-F]+");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var value = match.Value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? match.Value[2..]
+            : match.Value;
+        return long.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
     }
 
     private static DateTime ParseDate(string value)

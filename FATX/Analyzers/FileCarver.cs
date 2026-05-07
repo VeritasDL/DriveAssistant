@@ -60,6 +60,11 @@ namespace FATX.Analyzers
             {
                 try
                 {
+                    if (definition?.Enabled == false)
+                    {
+                        continue;
+                    }
+
                     _ = definition.GetHeaderBytes();
                     _customSignatures.Add(definition);
                 }

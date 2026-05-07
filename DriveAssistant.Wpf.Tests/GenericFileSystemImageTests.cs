@@ -1,8 +1,10 @@
+using FATX.Analyzers.Signatures;
 using FATXTools.Wpf;
 using System;
 using System.Buffers.Binary;
 using System.Collections;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -146,6 +148,81 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void PlayStationArchiveDisk_ReadsZipBackedImageWithoutRawExtraction()
+    {
+        var image = new byte[3 * 1024 * 1024 + 123];
+        for (var index = 0; index < image.Length; index++)
+        {
+            image[index] = (byte)(index * 31 + index / 7);
+        }
+
+        var zipPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
+        try
+        {
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("nested/test.img", CompressionLevel.Fastest);
+                using var entryStream = entry.Open();
+                entryStream.Write(image, 0, image.Length);
+            }
+
+            var archiveDiskType = typeof(GenericFileSystemImage).Assembly.GetType("FATXTools.Wpf.PlayStationArchiveDisk", throwOnError: true)!;
+            var isSupported = archiveDiskType.GetMethod("IsSupported", BindingFlags.Public | BindingFlags.Static)!;
+            var open = archiveDiskType.GetMethod("Open", BindingFlags.Public | BindingFlags.Static)!;
+            var read = archiveDiskType.GetMethod("Read", BindingFlags.Public | BindingFlags.Instance)!;
+
+            Assert.True((bool)isSupported.Invoke(null, [zipPath])!);
+            using var disk = (IDisposable)open.Invoke(null, [zipPath])!;
+            Assert.Equal(image.LongLength, GetProperty<long>(disk, "Length"));
+            Assert.Equal("nested/test.img", GetProperty<string>(disk, "EntryName"));
+
+            var boundaryBuffer = new byte[4096];
+            var boundaryOffset = 1024 * 1024 - 100;
+            var boundaryRead = (int)read.Invoke(disk, [boundaryOffset, boundaryBuffer, 0, boundaryBuffer.Length])!;
+            Assert.Equal(boundaryBuffer.Length, boundaryRead);
+            Assert.Equal(image.AsSpan(boundaryOffset, boundaryRead).ToArray(), boundaryBuffer);
+
+            var backwardBuffer = new byte[128];
+            var backwardRead = (int)read.Invoke(disk, [512L, backwardBuffer, 0, backwardBuffer.Length])!;
+            Assert.Equal(backwardBuffer.Length, backwardRead);
+            Assert.Equal(image.AsSpan(512, backwardRead).ToArray(), backwardBuffer);
+
+            var tailBuffer = new byte[100];
+            var tailOffset = image.Length - 50L;
+            var tailRead = (int)read.Invoke(disk, [tailOffset, tailBuffer, 0, tailBuffer.Length])!;
+            Assert.Equal(50, tailRead);
+            Assert.Equal(image.AsSpan((int)tailOffset, tailRead).ToArray(), tailBuffer.Take(tailRead).ToArray());
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(zipPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public void NtfsBitmapReader_CollapsesAllocatedBitsIntoRuns()
+    {
+        using var bitmap = new MemoryStream(new byte[] { 0b0001_1110, 0b1000_0001 });
+        var volumeType = typeof(GenericFileSystemImage).Assembly.GetType("FATXTools.Wpf.XboxNtfsVolume", throwOnError: true)!;
+        var readRuns = volumeType.GetMethod("ReadAllocationRuns", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var runs = ((IEnumerable)readRuns.Invoke(null, [bitmap, 16L])!).Cast<object>().ToArray();
+
+        Assert.Equal(3, runs.Length);
+        Assert.Equal(1, GetProperty<long>(runs[0], "StartCluster"));
+        Assert.Equal(4, GetProperty<long>(runs[0], "ClusterCount"));
+        Assert.Equal(8, GetProperty<long>(runs[1], "StartCluster"));
+        Assert.Equal(1, GetProperty<long>(runs[1], "ClusterCount"));
+        Assert.Equal(15, GetProperty<long>(runs[2], "StartCluster"));
+        Assert.Equal(1, GetProperty<long>(runs[2], "ClusterCount"));
+    }
+
+    [Fact]
     public void GenericCarver_XvdUsesNextXvdBoundAndReportsHeaderType()
     {
         using var temp = new TempFile(CreateXvdCarverImage());
@@ -162,6 +239,85 @@ public sealed class GenericFileSystemImageTests
         var second = rows.Single(row => row.SourceOffset == 0x5000);
         Assert.Contains("header type 0x41", second.Detail);
         Assert.Contains("retail", second.Detail);
+    }
+
+    [Fact]
+    public void GenericCarver_DetectsPs4PkgAndPlayStationSelf()
+    {
+        var image = new byte[0x5000];
+        Encoding.ASCII.GetBytes("SCE\0").CopyTo(image.AsSpan(0));
+        BinaryPrimitives.WriteUInt64BigEndian(image.AsSpan(0x10), 0x40);
+        BinaryPrimitives.WriteUInt64BigEndian(image.AsSpan(0x18), 0x80);
+
+        image[0x1000] = 0x7F;
+        Encoding.ASCII.GetBytes("CNT").CopyTo(image.AsSpan(0x1001));
+        BinaryPrimitives.WriteUInt64BigEndian(image.AsSpan(0x1018), 0x2000);
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "ps4 test");
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        var self = Assert.Single(rows, row => row.Kind == "SELF");
+        Assert.Equal(0xC0, self.Size);
+        Assert.Contains("PlayStation SELF", self.Detail);
+
+        var pkg = Assert.Single(rows, row => row.Kind == "PKG");
+        Assert.Equal(0x2000, pkg.Size);
+        Assert.Contains("PS4 package", pkg.Detail);
+    }
+
+    [Fact]
+    public void Ps4UfsDirentScanner_ReturnsDeletedCandidates()
+    {
+        var image = new byte[0x2000];
+        var block = image.AsSpan(0x1000, 0x1000);
+        var cursor = 0;
+        cursor += WriteUfsDirent(block[cursor..], 2, 12, 4, ".");
+        cursor += WriteUfsDirent(block[cursor..], 2, 12, 4, "..");
+        cursor += WriteUfsDirent(block[cursor..], 0, 16, 8, "SAVE.DAT");
+        _ = WriteUfsDirent(block[cursor..], 42, 16, 8, "LIVE.BIN");
+
+        using var temp = new TempFile(image);
+        var scanner = new Ps4UfsDirentScanner(temp.Path, 0x80000000);
+        var rows = scanner.Analyze(CancellationToken.None, null);
+
+        var deleted = Assert.Single(rows, row => row.Name == "SAVE.DAT");
+        Assert.True(deleted.IsDeleted);
+        Assert.Equal(0x80001018, deleted.Offset);
+        Assert.Equal("Deleted PS4 UFS dirent candidate", deleted.MetadataStatus);
+
+        var active = Assert.Single(rows, row => row.Name == "LIVE.BIN");
+        Assert.False(active.IsDeleted);
+        Assert.Equal((uint)42, active.Inode);
+    }
+
+    [Fact]
+    public void GenericCarver_CustomSignatureHonorsHeaderOffset()
+    {
+        var image = new byte[0x2000];
+        Encoding.ASCII.GetBytes("WAVE").CopyTo(image.AsSpan(0x408));
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x200, "test image");
+        carver.SetCustomSignatures(new[]
+        {
+            new CustomSignatureDefinition
+            {
+                Name = "WAV RIFF audio",
+                Platform = "Common",
+                Description = "WAVE marker at RIFF offset 8.",
+                HeaderHex = "57 41 56 45",
+                HeaderOffset = 8,
+                MaxSearchLength = 0x1000,
+                Extension = ".wav"
+            }
+        });
+
+        var row = Assert.Single(carver.Analyze(CancellationToken.None, null));
+        Assert.Equal(0x400, row.SourceOffset);
+        Assert.Equal("WAV", row.Kind);
+        Assert.Equal(0x1000, row.Size);
+        Assert.Contains("Common", row.Detail);
     }
 
     private static byte[] CreateFat32Image()
@@ -266,6 +422,16 @@ public sealed class GenericFileSystemImageTests
         var entry = header.Slice(0x20 + index * 0x10, 0x10);
         BinaryPrimitives.WriteUInt32LittleEndian(entry, offsetPages);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[4..], sizePages);
+    }
+
+    private static int WriteUfsDirent(Span<byte> target, uint inode, ushort recordLength, byte type, string name)
+    {
+        BinaryPrimitives.WriteUInt32LittleEndian(target, inode);
+        BinaryPrimitives.WriteUInt16LittleEndian(target[4..], recordLength);
+        target[6] = type;
+        target[7] = (byte)name.Length;
+        Encoding.ASCII.GetBytes(name).CopyTo(target[8..]);
+        return recordLength;
     }
 
     private static byte[] Create4096ByteGptImage(byte[] partitionPayload, string partitionName)

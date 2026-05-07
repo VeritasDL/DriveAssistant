@@ -20,7 +20,17 @@ namespace FATX.Analyzers.Signatures
 
         public override bool Test()
         {
+            if (!_definition.Enabled)
+            {
+                return false;
+            }
+
             var header = _definition.GetHeaderBytes();
+            if (_definition.HeaderOffset > 0)
+            {
+                Seek(_definition.HeaderOffset, SeekOrigin.Begin);
+            }
+
             var data = ReadBytes(header.Length);
             if (data.Length != header.Length)
             {
@@ -43,7 +53,10 @@ namespace FATX.Analyzers.Signatures
             var footer = _definition.GetFooterBytes();
             if (footer == null || footer.Length == 0)
             {
-                FileSize = Math.Max(_definition.GetHeaderBytes().Length, 1);
+                var fallbackSize = _definition.MaxSearchLength > 0
+                    ? _definition.MaxSearchLength
+                    : _definition.HeaderOffset + _definition.GetHeaderBytes().Length;
+                FileSize = Math.Max(fallbackSize, _definition.HeaderOffset + _definition.GetHeaderBytes().Length);
                 return;
             }
 

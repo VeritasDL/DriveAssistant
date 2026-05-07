@@ -11,15 +11,7 @@ namespace FATXTools.Utilities
         public static List<CustomSignatureDefinition> Load(string path)
         {
             var signatures = new List<CustomSignatureDefinition>();
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return signatures;
-            }
-
-            if (!Path.IsPathRooted(path))
-            {
-                path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
-            }
+            path = ResolvePath(path);
 
             if (!File.Exists(path))
             {
@@ -34,6 +26,19 @@ namespace FATXTools.Utilities
             }
 
             return signatures;
+        }
+
+        public static string ResolvePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) ||
+                string.Equals(path.Trim(), "custom_carvers.json", StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "custom_carvers.json");
+            }
+
+            return Path.IsPathRooted(path)
+                ? path
+                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
         }
     }
 }

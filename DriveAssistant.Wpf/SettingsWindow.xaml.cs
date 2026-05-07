@@ -42,7 +42,7 @@ public partial class SettingsWindow : Window
         ThemeCombo.SelectedItem = _themeOptions.First(option => option.Name == WpfTheme.NormalizeName(_settings.Theme));
         EnableFileLoggingCheckBox.IsChecked = _settings.EnableFileLogging;
         LogFileTextBox.Text = _settings.LogFile;
-        CustomCarversTextBox.Text = _settings.CustomCarversFile;
+        CustomCarversTextBox.Text = AppSettings.NormalizeCustomCarversFile(_settings.CustomCarversFile);
     }
 
     public AppSettings Result => _settings;
@@ -96,7 +96,7 @@ public partial class SettingsWindow : Window
             : WpfTheme.Dark;
         _settings.EnableFileLogging = EnableFileLoggingCheckBox.IsChecked == true;
         _settings.LogFile = LogFileTextBox.Text.Trim();
-        _settings.CustomCarversFile = CustomCarversTextBox.Text.Trim();
+        _settings.CustomCarversFile = AppSettings.NormalizeCustomCarversFile(CustomCarversTextBox.Text);
 
         DialogResult = true;
         Close();

@@ -31,6 +31,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\DriveAssistant.Shared\custom_carvers.json" Link="custom_carvers.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="tools\ps-hdd\pshdd-bridge.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>tools\ps-hdd\pshdd-bridge.dll</Link>

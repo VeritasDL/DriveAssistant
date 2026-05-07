@@ -7,6 +7,10 @@ namespace FATXTools.Wpf;
 
 public sealed class AppSettings
 {
+    public static readonly string DefaultCustomCarversFile = Path.Combine(
+        AppDomain.CurrentDomain.BaseDirectory,
+        "custom_carvers.json");
+
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Drive Assistant",
@@ -22,7 +26,7 @@ public sealed class AppSettings
 
     public bool EnableFileLogging { get; set; } = true;
 
-    public string CustomCarversFile { get; set; } = "custom_carvers.json";
+    public string CustomCarversFile { get; set; } = DefaultCustomCarversFile;
 
     public string PlayStationMountToolPath { get; set; } = string.Empty;
 
@@ -37,7 +41,9 @@ public sealed class AppSettings
                 return new AppSettings();
             }
 
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new AppSettings();
+            settings.CustomCarversFile = NormalizeCustomCarversFile(settings.CustomCarversFile);
+            return settings;
         }
         catch
         {
@@ -61,9 +67,22 @@ public sealed class AppSettings
             MetadataParallelWorkers = MetadataParallelWorkers,
             LogFile = LogFile,
             EnableFileLogging = EnableFileLogging,
-            CustomCarversFile = CustomCarversFile,
+            CustomCarversFile = NormalizeCustomCarversFile(CustomCarversFile),
             PlayStationMountToolPath = PlayStationMountToolPath,
             Theme = WpfTheme.NormalizeName(Theme)
         };
+    }
+
+    public static string NormalizeCustomCarversFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            string.Equals(path.Trim(), "custom_carvers.json", StringComparison.OrdinalIgnoreCase))
+        {
+            return DefaultCustomCarversFile;
+        }
+
+        return Path.IsPathRooted(path)
+            ? path
+            : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
     }
 }

@@ -332,6 +332,32 @@ public sealed class XboxNtfsVolume : IDisposable
 
     public string SourcePath => _sourcePath;
 
+    public IReadOnlyList<NtfsAllocationRun> ReadAllocationRuns()
+    {
+        if (_fileSystem.TotalClusters <= 0)
+        {
+            return [];
+        }
+
+        try
+        {
+            using var bitmap = _fileSystem.OpenFile(@"$Bitmap::$DATA", FileMode.Open, FileAccess.Read);
+            return ReadAllocationRuns(bitmap, _fileSystem.TotalClusters);
+        }
+        catch
+        {
+            try
+            {
+                using var bitmap = _fileSystem.OpenFile(@"\$Bitmap::$DATA", FileMode.Open, FileAccess.Read);
+                return ReadAllocationRuns(bitmap, _fileSystem.TotalClusters);
+            }
+            catch
+            {
+                return [];
+            }
+        }
+    }
+
     public IReadOnlyList<XboxFileEntry> GetRoot()
     {
         return GetChildren(null);
@@ -740,6 +766,51 @@ public sealed class XboxNtfsVolume : IDisposable
         }
     }
 
+    private static IReadOnlyList<NtfsAllocationRun> ReadAllocationRuns(Stream bitmap, long totalClusters)
+    {
+        const int bufferSize = 0x100000;
+        var buffer = new byte[bufferSize];
+        var runs = new List<NtfsAllocationRun>();
+        long cluster = 0;
+        long? runStart = null;
+
+        while (cluster < totalClusters)
+        {
+            var read = bitmap.Read(buffer, 0, buffer.Length);
+            if (read == 0)
+            {
+                break;
+            }
+
+            for (var byteIndex = 0; byteIndex < read && cluster < totalClusters; byteIndex++)
+            {
+                var value = buffer[byteIndex];
+                for (var bit = 0; bit < 8 && cluster < totalClusters; bit++, cluster++)
+                {
+                    var allocated = (value & (1 << bit)) != 0;
+                    if (allocated)
+                    {
+                        runStart ??= cluster;
+                        continue;
+                    }
+
+                    if (runStart is { } start)
+                    {
+                        runs.Add(new NtfsAllocationRun(start, cluster - start));
+                        runStart = null;
+                    }
+                }
+            }
+        }
+
+        if (runStart is { } trailingStart)
+        {
+            runs.Add(new NtfsAllocationRun(trailingStart, totalClusters - trailingStart));
+        }
+
+        return runs;
+    }
+
     private static int GetFileNameNamespacePriority(FileNameAttribute attribute)
     {
         return attribute.FileNameNamespace.ToString() switch
@@ -905,6 +976,8 @@ public sealed record XboxFileEntry(
 }
 
 public sealed record FileExtent(long Offset, long Length);
+
+public sealed record NtfsAllocationRun(long StartCluster, long ClusterCount);
 
 public sealed record NtfsMetadataScanProgress(int Current, int Total);
 
