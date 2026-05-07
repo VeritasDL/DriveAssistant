@@ -3332,6 +3332,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool EnsureEnoughDiskSpaceForExport(string? destinationPath, long estimatedBytes)
     {
+        return EnsureEnoughDiskSpace(destinationPath, estimatedBytes, "export");
+    }
+
+    private bool EnsureEnoughDiskSpace(string? destinationPath, long estimatedBytes, string operationName)
+    {
         if (string.IsNullOrWhiteSpace(destinationPath) || estimatedBytes <= 0)
         {
             return true;
@@ -3349,7 +3354,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var drive = new DriveInfo(root);
             if (!drive.IsReady)
             {
-                AppendLog($"Export disk-space check skipped because destination drive is not ready: {root}");
+                AppendLog($"{operationName} disk-space check skipped because destination drive is not ready: {root}");
                 return true;
             }
 
@@ -3359,20 +3364,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 : estimatedBytes + reserveBytes;
             if (drive.AvailableFreeSpace >= requiredBytes)
             {
-                AppendLog($"Export disk-space check passed: need about {FormatBytes(requiredBytes)}, available {FormatBytes(drive.AvailableFreeSpace)} on {root}.");
+                AppendLog($"{operationName} disk-space check passed: need about {FormatBytes(requiredBytes)}, available {FormatBytes(drive.AvailableFreeSpace)} on {root}.");
                 return true;
             }
 
             var message =
-                $"The export is estimated to need {FormatBytes(estimatedBytes)} plus a safety reserve ({FormatBytes(requiredBytes)} total), but {root} only has {FormatBytes(drive.AvailableFreeSpace)} free.";
-            StatusText = "Not enough free space for export.";
-            AppendLog($"Export blocked by disk-space preflight: {message}");
+                $"The {operationName} is estimated to need {FormatBytes(estimatedBytes)} plus a safety reserve ({FormatBytes(requiredBytes)} total), but {root} only has {FormatBytes(drive.AvailableFreeSpace)} free.";
+            StatusText = $"Not enough free space for {operationName}.";
+            AppendLog($"{operationName} blocked by disk-space preflight: {message}");
             MessageBox.Show(this, message, "Not Enough Free Space", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
         }
         catch (Exception ex)
         {
-            AppendLog($"Export disk-space check could not read destination capacity: {ex.Message}");
+            AppendLog($"{operationName} disk-space check could not read destination capacity: {ex.Message}");
             return true;
         }
     }
@@ -4984,6 +4989,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var path = Path.Combine(
             Path.GetTempPath(),
             $"drive_assistant_ps_{SanitizeFileName(volume.Name)}_{DateTime.UtcNow.Ticks}.img");
+        if (!EnsureEnoughDiskSpace(path, volume.Length, "temporary PlayStation decrypt"))
+        {
+            throw new IOException("Not enough free space to create the temporary decrypted PlayStation partition image.");
+        }
+
         volume.DecryptToFile(path);
         _temporaryScanFiles.Add(path);
         return path;
