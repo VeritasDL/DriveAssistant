@@ -8,12 +8,21 @@ The codebase started as FATXTools, but the active application and published proj
 
 - Open raw `.img` images and HDD Raw Copy `.imgc` compressed images.
 - Browse mounted Xbox 360 FATX, original Xbox FATX, Xbox One/Series GPT/NTFS, XBFS, FAT32, exFAT, NTFS, and supported PlayStation partitions.
-- Export files and folders without blocking the UI, with progress and cancellation for long exports.
-- Scan filesystem metadata and show recovered/deleted entries in the main file table.
-- Carve known file types from raw partitions with configurable scan intervals and custom signatures.
-- Detect Xbox One/Series XVD containers, classify known XVD header types, and surface plaintext manifest display names when available.
+- Export files and folders without blocking the UI, with progress, cancellation, and disk-space preflight checks before large saves.
+- Scan filesystem metadata and show recovered/deleted entries in the main file table, with cancellation for long-running metadata scans.
+- Carve known file types from raw partitions with configurable scan intervals, fast/balanced/exhaustive scan profiles, cancellation, and custom signatures.
+- Detect Xbox One/Series XVD/XVC containers, classify known XVD header types, and surface plaintext manifest display names when available.
+- Probe readable filesystems found inside XVD/XVC containers as separate nested scan rows so outer NTFS results stay distinct from inner container findings.
+- Show XVD classification and display-name details beside `.xvd` filesystem rows and in carved-file details.
 - Inspect offsets, extents, clusters, timestamps, attributes, and recovery status.
+- Show row-color legends for fragmentation, overwritten/unrecoverable, sparse/resident, deleted, and orphan-inode states.
 - Save and reload analysis databases.
+
+## Download
+
+The easiest way to run Drive Assistant is to download the latest Windows x64 ZIP from [GitHub Releases](https://github.com/rain0x06/DriveAssistant/releases/latest), extract it, and run `Drive Assistant.exe`.
+
+The portable release package is self-contained and includes the .NET runtime plus the bundled native PlayStation helper binaries under `tools\ps-hdd`.
 
 ## Repository Layout
 
@@ -87,27 +96,29 @@ Self-contained Windows x64 publish:
 dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o .\publish\DriveAssistant-win-x64
 ```
 
+Release packages are built by `.github/workflows/release.yaml` for tags like `v0.3.54`. The workflow runs tests, publishes a self-contained Windows x64 ZIP, emits a SHA256 checksum, and creates or updates the GitHub release. If `WINDOWS_CODESIGN_PFX_BASE64` and `WINDOWS_CODESIGN_PFX_PASSWORD` repository secrets are configured, the workflow signs the Windows binaries before packaging.
+
 ## File Carving Notes
 
 - Prefer scanning the specific partition you care about rather than the whole disk.
-- File carving speed depends heavily on the configured interval:
+- File carving speed depends on both the scan profile and the configured interval. Profiles do not silently change the interval you selected:
+  - `Fast` skips custom signatures and nested XVD/XVC filesystem probes.
+  - `Balanced` uses custom signatures and bounded nested XVD/XVC probes.
+  - `Exhaustive` uses custom signatures and deeper nested XVD/XVC probes.
+- Intervals still control scan step size:
   - `Sector` (`0x200`) is the default balance.
   - `Align` (`0x10`) and `Byte` (`0x1`) are more exhaustive but much slower.
   - `Page` (`0x1000`) is faster for formats known to be page-aligned, such as many Xbox One/Series containers.
 - Built-in text carving is intentionally disabled to avoid noisy result sets and long scans.
 - Custom carving signatures can be loaded from `custom_carvers.json`; keep custom patterns specific.
+- Nested XVD/XVC probing detects readable inner filesystem headers. It does not decrypt encrypted XVD content.
 
 ## Roadmap / TODO
 
-- Add PS4 and PS5 workflows for partition discovery, filesystem browsing, and safe export where legally and technically practical.
+- Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
 - Improve PlayStation bridge packaging so native helper binaries are easier to rebuild from source.
-- Add XVD-aware nested scanning that keeps outer NTFS results separate from filesystems found inside XVD/XVC containers.
-- Show XVD classification and plaintext display names directly beside `.xvd` filesystem rows.
-- Add a scan profile selector for exhaustive, balanced, and fast carving presets without silently changing the selected interval.
-- Add resumable/cancelable metadata scans and file carver scans.
-- Add safer disk-space estimation before large exports.
-- Expand automated tests with larger synthetic Xbox GPT/NTFS and FATX carving fixtures.
-- Add release packaging and signed artifact workflow.
+- Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
+- Broaden integration tests around native PS4 deleted-inode export paths.
 
 ## Documentation
 
