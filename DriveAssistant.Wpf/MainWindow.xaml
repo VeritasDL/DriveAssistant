@@ -829,6 +829,7 @@
                                         <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="120" MinWidth="92" CanUserResize="True" />
                                         <DataGridTextColumn Header="Offset" Binding="{Binding OffsetText}" SortMemberPath="Offset" Width="160" MinWidth="135" CanUserResize="True" />
                                         <DataGridTextColumn Header="Source" Binding="{Binding Source}" SortMemberPath="Source" Width="180" MinWidth="130" CanUserResize="True" />
+                                        <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" SortMemberPath="Detail" Width="320" MinWidth="180" CanUserResize="True" />
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </Border>
@@ -889,27 +890,47 @@
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
-                                            <Button Grid.Column="1"
-                                                    Margin="12,0,0,8"
-                                                    VerticalAlignment="Top"
-                                                    Click="CancelExport_Click"
-                                                    IsEnabled="{Binding CanCancelExport}"
-                                                    ToolTip="Cancel current export">
-                                                <Button.Style>
-                                                    <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding CanCancelExport}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Style="{StaticResource IconText}" Text="&#xE711;" />
-                                                    <TextBlock Text="Cancel Export" />
-                                                </StackPanel>
-                                            </Button>
+                                            <StackPanel Grid.Column="1"
+                                                        Margin="12,0,0,8"
+                                                        VerticalAlignment="Top">
+                                                <Button Click="CancelScan_Click"
+                                                        IsEnabled="{Binding CanCancelScan}"
+                                                        ToolTip="Cancel current metadata or file-carver scan">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding CanCancelScan}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Style="{StaticResource IconText}" Text="&#xE711;" />
+                                                        <TextBlock Text="Cancel Scan" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Margin="0,8,0,0"
+                                                        Click="CancelExport_Click"
+                                                        IsEnabled="{Binding CanCancelExport}"
+                                                        ToolTip="Cancel current export">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding CanCancelExport}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Style="{StaticResource IconText}" Text="&#xE711;" />
+                                                        <TextBlock Text="Cancel Export" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </StackPanel>
                                         </Grid>
                                     </Border>
                                     <TextBox x:Name="LogTextBox"

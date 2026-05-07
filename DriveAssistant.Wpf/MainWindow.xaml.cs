@@ -48,6 +48,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isMetadataScanRunning;
     private bool _isFileCarverRunning;
     private bool _isExportRunning;
+    private CancellationTokenSource? _metadataScanCancellation;
+    private CancellationTokenSource? _fileCarverCancellation;
     private CancellationTokenSource? _exportCancellation;
     private string _statusText = "Ready";
     private string _logText = string.Empty;
@@ -250,6 +252,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanRunFileCarver));
                 OnPropertyChanged(nameof(HasSelection));
                 OnPropertyChanged(nameof(HasOpenDatabase));
+                OnPropertyChanged(nameof(CanCancelScan));
                 OnPropertyChanged(nameof(CanCancelExport));
             }
         }
@@ -260,6 +263,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanRunMetadataScan => HasActiveVolume && (SelectedPartition?.FatxVolume != null || SelectedPartition?.NtfsVolume != null || SelectedPartition?.PlayStationVolume != null || SelectedPartition?.GenericVolume != null) && !_isMetadataScanRunning && !_isExportRunning;
 
     public bool CanRunFileCarver => HasActiveVolume && (SelectedPartition?.FatxVolume != null || SelectedPartition?.NtfsVolume != null || SelectedPartition?.PlayStationVolume != null || SelectedPartition?.GenericVolume != null) && !_isFileCarverRunning && !_isExportRunning;
+
+    public bool CanCancelScan => _isMetadataScanRunning && _metadataScanCancellation?.IsCancellationRequested != true
+                                 || _isFileCarverRunning && _fileCarverCancellation?.IsCancellationRequested != true;
 
     public bool CanCancelExport => _isExportRunning && _exportCancellation?.IsCancellationRequested != true;
 
@@ -773,6 +779,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         const string progressLogKey = "metadata-scan-progress";
 
         _isMetadataScanRunning = true;
+        _metadataScanCancellation = new CancellationTokenSource();
+        var cancellationToken = _metadataScanCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("Metadata scan");
@@ -806,10 +814,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 var entries = !string.IsNullOrWhiteSpace(_activeRawImagePath) && File.Exists(_activeRawImagePath)
                     ? analyzer.AnalyzeParallel(
                         () => new PositionedClusterDataReader(_activeRawImagePath, volume),
-                        CancellationToken.None,
+                        cancellationToken,
                         progress,
                         metadataWorkerCount)
-                    : analyzer.Analyze(CancellationToken.None, progress);
+                    : analyzer.Analyze(cancellationToken, progress);
+                cancellationToken.ThrowIfCancellationRequested();
                 return new MetadataScanResult(
                     entries.Select(entry => new FileRow(entry, volume, source: "Recovered")).ToList(),
                     entries);
@@ -830,6 +839,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AppendLog($"Metadata scan complete: {MetadataResults.Count} entries found.");
             AppendLog($"Recovery View updated: {RecoveryTreeRoots.Count} cluster groups, {ClusterRows.Count} occupied clusters.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Metadata scan canceled";
+            progressRow.Update(progressRow.Value, "Canceled - metadata scan");
+            UpdateLiveLog(progressLogKey, $"Metadata scan canceled ({progressWatch.Elapsed:mm\\:ss}).");
+            AppendLog("Metadata scan canceled.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -840,6 +856,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             progressWatch.Stop();
             _isMetadataScanRunning = false;
+            _metadataScanCancellation?.Dispose();
+            _metadataScanCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
@@ -858,6 +876,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         const string progressLogKey = "metadata-scan-progress";
 
         _isMetadataScanRunning = true;
+        _metadataScanCancellation = new CancellationTokenSource();
+        var cancellationToken = _metadataScanCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("Metadata scan");
@@ -886,7 +906,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
-            var rows = await Task.Run(() => volume.ScanMetadata(CancellationToken.None, progress));
+            var rows = await Task.Run(() => volume.ScanMetadata(cancellationToken, progress), cancellationToken);
 
             MetadataResults.Clear();
             foreach (var row in rows.Select(entry => new FileRow(entry, source: "Metadata")))
@@ -913,6 +933,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             StatusText = _isFileCarverRunning ? "File carver still running..." : "Ready";
             AppendLog($"NTFS metadata scan complete: {MetadataResults.Count:N0} MFT entries, {deletedCount:N0} deleted, {metadataCount:N0} NTFS metadata records.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Metadata scan canceled";
+            progressRow.Update(progressRow.Value, $"Canceled - {volume.Name} MFT metadata");
+            UpdateLiveLog(progressLogKey, $"NTFS metadata scan canceled ({progressWatch.Elapsed:mm\\:ss}).");
+            AppendLog($"NTFS metadata scan canceled: {volume.Name}.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -923,6 +950,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             progressWatch.Stop();
             _isMetadataScanRunning = false;
+            _metadataScanCancellation?.Dispose();
+            _metadataScanCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
@@ -940,6 +969,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         const string progressLogKey = "metadata-scan-progress";
 
         _isMetadataScanRunning = true;
+        _metadataScanCancellation = new CancellationTokenSource();
+        var cancellationToken = _metadataScanCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("Metadata scan");
@@ -968,9 +999,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var result = await Task.Run(() =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var activeRows = volume.ScanMetadata()
                     .Select(entry => new FileRow(entry, "Metadata"))
                     .ToList();
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var deletedCandidates = new List<FileRow>();
                 try
@@ -987,7 +1020,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (!string.IsNullOrWhiteSpace(existingDecryptedPath))
                 {
                     var scanner = new Ps4UfsDirentScanner(existingDecryptedPath, volume.Offset);
-                    deletedCandidates = scanner.Analyze(CancellationToken.None, progress)
+                    deletedCandidates = scanner.Analyze(cancellationToken, progress)
                         .Where(entry => entry.IsDeleted)
                         .GroupBy(entry => $"{entry.Offset:X}:{entry.Name}", StringComparer.OrdinalIgnoreCase)
                         .Select(group => new FileRow(group.First(), volume.Name, volume))
@@ -1004,7 +1037,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     DeletedCandidateCount = deletedCandidates.Count,
                     ScannedDeletedCandidates = deletedCandidates.Count > 0 || !string.IsNullOrWhiteSpace(existingDecryptedPath)
                 };
-            });
+            }, cancellationToken);
 
             MetadataResults.Clear();
             foreach (var row in result.Rows)
@@ -1033,6 +1066,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ? $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates."
                 : $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries. Deleted UFS candidate scan skipped because no decrypted partition cache exists.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Metadata scan canceled";
+            progressRow.Update(progressRow.Value, $"Canceled - {volume.Name} metadata");
+            UpdateLiveLog(progressLogKey, $"PlayStation metadata scan canceled ({progressWatch.Elapsed:mm\\:ss}).");
+            AppendLog($"PlayStation metadata scan canceled: {volume.Name}.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -1043,6 +1083,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             progressWatch.Stop();
             _isMetadataScanRunning = false;
+            _metadataScanCancellation?.Dispose();
+            _metadataScanCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
@@ -1056,6 +1098,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _isMetadataScanRunning = true;
+        _metadataScanCancellation = new CancellationTokenSource();
+        var cancellationToken = _metadataScanCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("Metadata scan");
@@ -1072,7 +1116,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
-            var rows = await Task.Run(() => volume.ScanDeleted(CancellationToken.None, progress));
+            var rows = await Task.Run(() => volume.ScanDeleted(cancellationToken, progress), cancellationToken);
 
             MetadataResults.Clear();
             foreach (var row in rows.Select(entry => new FileRow(entry, source: "Metadata")))
@@ -1096,6 +1140,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             StatusText = _isFileCarverRunning ? "File carver still running..." : "Ready";
             AppendLog($"{volume.FamilyText} metadata scan complete: {MetadataResults.Count:N0} deleted entries found.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Metadata scan canceled";
+            progressRow.Update(progressRow.Value, $"Canceled - {volume.FamilyText} metadata");
+            AppendLog($"{volume.FamilyText} metadata scan canceled: {volume.Name}.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -1105,6 +1155,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally
         {
             _isMetadataScanRunning = false;
+            _metadataScanCancellation?.Dispose();
+            _metadataScanCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
@@ -1169,13 +1221,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         const string progressLogKey = "file-carver-progress";
 
         _isFileCarverRunning = true;
+        _fileCarverCancellation = new CancellationTokenSource();
+        var cancellationToken = _fileCarverCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("File carver");
         progressRow.Update(0, $"0% - 0 / {totalSteps:N0}");
         SelectLogTab();
         StatusText = "Carving files...";
-        AppendLog($"File carver started: {totalSteps:N0} scan steps, interval 0x{interval:X}.");
+        AppendLog($"File carver started: {totalSteps:N0} scan steps, interval 0x{interval:X}, profile {_settings.ScanProfile}. Profile selection does not change the selected interval.");
         BeginLiveLog(progressLogKey, $"File carver progress: 0% (0/{totalSteps:N0}, 00:00).");
 
         var progress = new Progress<int>(current =>
@@ -1201,9 +1255,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (!string.IsNullOrWhiteSpace(activeRawImagePath) && File.Exists(activeRawImagePath))
                 {
                     var sourceOffset = volume.Offset + volume.FileAreaByteOffset;
-                    var fastCarver = new GenericFileCarver(activeRawImagePath, sourceOffset, scanLength, sourceOffset, interval, $"FATX {volume.Name}");
-                    fastCarver.SetCustomSignatures(CustomSignatureLoader.Load(_settings.CustomCarversFile));
-                    var fastRows = fastCarver.Analyze(CancellationToken.None, progress)
+                    var fastCarver = new GenericFileCarver(activeRawImagePath, sourceOffset, scanLength, sourceOffset, interval, $"FATX {volume.Name}", _settings.ScanProfile);
+                    fastCarver.SetCustomSignatures(LoadCustomCarversForProfile());
+                    var fastRows = fastCarver.Analyze(cancellationToken, progress)
                         .Select(file => new CarvedFileRow(file))
                         .ToList();
 
@@ -1211,8 +1265,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
 
                 var carver = new FileCarver(volume, _settings.FileCarverInterval, scanLength);
-                carver.SetCustomSignatures(CustomSignatureLoader.Load(_settings.CustomCarversFile));
-                var rows = carver.Analyze(CancellationToken.None, progress)
+                carver.SetCustomSignatures(LoadCustomCarversForProfile());
+                var rows = carver.Analyze(cancellationToken, progress)
                     .Select(signature => new CarvedFileRow(signature, volume))
                     .ToList();
 
@@ -1229,6 +1283,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             StatusText = _isMetadataScanRunning ? "Metadata scan still running..." : "Ready";
             AppendLog($"File carver complete: {CarvedFiles.Count} files found, {result.badOffsetCount} bad offsets, {result.errorCount} errors.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "File carver canceled";
+            progressRow.Update(progressRow.Value, "Canceled - file carver");
+            UpdateLiveLog(progressLogKey, $"File carver canceled ({progressWatch.Elapsed:mm\\:ss}).");
+            AppendLog("File carver canceled.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -1239,6 +1300,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             progressWatch.Stop();
             _isFileCarverRunning = false;
+            _fileCarverCancellation?.Dispose();
+            _fileCarverCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
@@ -1252,6 +1315,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _isFileCarverRunning = true;
+        _fileCarverCancellation = new CancellationTokenSource();
+        var cancellationToken = _fileCarverCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("File carver");
@@ -1262,7 +1327,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string decryptedPath;
         try
         {
-            decryptedPath = await Task.Run(() => EnsurePlayStationDecryptedPartition(volume));
+            decryptedPath = await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = EnsurePlayStationDecryptedPartition(volume);
+                cancellationToken.ThrowIfCancellationRequested();
+                return path;
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "File carver canceled";
+            progressRow.Update(progressRow.Value, $"Canceled - {volume.Name} file carver");
+            AppendLog($"PlayStation file carver canceled while preparing partition: {volume.Name}.");
+            _isFileCarverRunning = false;
+            _fileCarverCancellation?.Dispose();
+            _fileCarverCancellation = null;
+            UpdateTaskState();
+            RefreshSelectionState();
+            return;
         }
         catch (Exception ex)
         {
@@ -1270,12 +1353,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AppendLog($"PlayStation partition decrypt failed: {ex.Message}");
             MessageBox.Show(this, ex.Message, AppName, MessageBoxButton.OK, MessageBoxImage.Error);
             _isFileCarverRunning = false;
+            _fileCarverCancellation?.Dispose();
+            _fileCarverCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
             return;
         }
 
         _isFileCarverRunning = false;
+        _fileCarverCancellation?.Dispose();
+        _fileCarverCancellation = null;
         UpdateTaskState();
         await RunGenericFileCarverAsync(
             "PlayStation",
@@ -1314,13 +1401,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         const string progressLogKey = "file-carver-progress";
 
         _isFileCarverRunning = true;
+        _fileCarverCancellation = new CancellationTokenSource();
+        var cancellationToken = _fileCarverCancellation.Token;
         UpdateTaskState();
         IsScanProgressVisible = true;
         var progressRow = GetOrCreateScanProgressRow("File carver");
         progressRow.Update(0, $"0% - 0 / {totalSteps:N0}");
         SelectLogTab();
         StatusText = $"Carving {family} files...";
-        AppendLog($"{family} file carver started: {partitionName}, {totalSteps:N0} scan steps, interval 0x{interval:X}.");
+        AppendLog($"{family} file carver started: {partitionName}, {totalSteps:N0} scan steps, interval 0x{interval:X}, profile {_settings.ScanProfile}. Profile selection does not change the selected interval.");
         BeginLiveLog(progressLogKey, $"{family} file carver progress: 0% (0/{totalSteps:N0}, 00:00).");
 
         var progress = new Progress<int>(current =>
@@ -1342,12 +1431,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var rows = await Task.Run(() =>
             {
-                var carver = new GenericFileCarver(sourcePath, sourceOffset, scanLength, displayBaseOffset, interval, $"{family} {partitionName}");
-                carver.SetCustomSignatures(CustomSignatureLoader.Load(_settings.CustomCarversFile));
-                return carver.Analyze(CancellationToken.None, progress)
+                var carver = new GenericFileCarver(sourcePath, sourceOffset, scanLength, displayBaseOffset, interval, $"{family} {partitionName}", _settings.ScanProfile);
+                carver.SetCustomSignatures(LoadCustomCarversForProfile());
+                return carver.Analyze(cancellationToken, progress)
                     .Select(file => new CarvedFileRow(file))
                     .ToList();
-            });
+            }, cancellationToken);
 
             CarvedFiles.Clear();
             foreach (var row in rows)
@@ -1359,6 +1448,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             StatusText = _isMetadataScanRunning ? "Metadata scan still running..." : "Ready";
             AppendLog($"{family} file carver complete: {CarvedFiles.Count:N0} files found.");
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = "File carver canceled";
+            progressRow.Update(progressRow.Value, $"Canceled - {family} file carver");
+            UpdateLiveLog(progressLogKey, $"{family} file carver canceled ({progressWatch.Elapsed:mm\\:ss}).");
+            AppendLog($"{family} file carver canceled: {partitionName}.");
+        }
         catch (Exception ex)
         {
             StatusText = "Failed";
@@ -1369,9 +1465,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             progressWatch.Stop();
             _isFileCarverRunning = false;
+            _fileCarverCancellation?.Dispose();
+            _fileCarverCancellation = null;
             UpdateTaskState();
             RefreshSelectionState();
         }
+    }
+
+    private IReadOnlyList<CustomSignatureDefinition> LoadCustomCarversForProfile()
+    {
+        return _settings.ScanProfile == ScanProfile.Fast
+            ? Array.Empty<CustomSignatureDefinition>()
+            : CustomSignatureLoader.Load(_settings.CustomCarversFile);
     }
 
     private async void SaveSelected_Click(object sender, RoutedEventArgs e)
@@ -2919,7 +3024,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     throw new InvalidOperationException("Loaded database snapshots do not contain file data to export.");
                 }
             },
-            $"Saved folder: {targetPath}");
+            $"Saved folder: {targetPath}",
+            targetPath);
     }
 
     private async Task SaveFileRowsAsync(IReadOnlyCollection<FileRow> rows)
@@ -2963,7 +3069,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     WriteEntryToDirectory(row, destination, state);
                 }
             },
-            $"Saved {rows.Count:N0} selected filesystem item(s) to: {destination}");
+            $"Saved {rows.Count:N0} selected filesystem item(s) to: {destination}",
+            destination);
     }
 
     private async Task SaveCarvedRowsAsync(IReadOnlyCollection<CarvedFileRow> rows)
@@ -3004,7 +3111,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     WriteCarvedFile(row, path, state);
                 }
             },
-            $"Saved {rows.Count:N0} carved file(s) to: {destination}");
+            $"Saved {rows.Count:N0} carved file(s) to: {destination}",
+            destination);
     }
 
     private async Task SaveRecoveryRowsAsync(IReadOnlyCollection<RecoveryFileRow> rows)
@@ -3039,7 +3147,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     WriteRecoveryFileToDirectory(row, destination, state);
                 }
             },
-            $"Saved {rows.Count:N0} recovered item(s) to: {destination}");
+            $"Saved {rows.Count:N0} recovered item(s) to: {destination}",
+            destination);
     }
 
     private async Task SaveRecoveryFileAsync(RecoveryFileRow row)
@@ -3060,7 +3169,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Math.Max(0, row.SizeBytes),
             1,
             state => WriteRecoveryFile(row, dialog.FileName, state),
-            $"Saved recovered file: {dialog.FileName}");
+            $"Saved recovered file: {dialog.FileName}",
+            dialog.FileName);
     }
 
     private async Task SaveDirectoryRowAsync(FileRow row)
@@ -3076,7 +3186,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             EstimateFileRowBytes(row),
             CountFileRowItems(row),
             state => WriteEntryToDirectory(row, destination, state),
-            $"Saved folder: {Path.Combine(destination, row.Name)}");
+            $"Saved folder: {Path.Combine(destination, row.Name)}",
+            destination);
     }
 
     private async Task SaveFileRowAsync(FileRow row)
@@ -3103,7 +3214,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Math.Max(0, row.SizeBytes),
             1,
             state => WriteDirectoryEntry(row, dialog.FileName, state),
-            $"Saved file: {dialog.FileName}");
+            $"Saved file: {dialog.FileName}",
+            dialog.FileName);
     }
 
     private async Task SaveCarvedFileAsync(CarvedFileRow row)
@@ -3132,14 +3244,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 WriteCarvedFile(row, dialog.FileName, state);
             },
-            $"Saved carved file: {dialog.FileName}");
+            $"Saved carved file: {dialog.FileName}",
+            dialog.FileName);
     }
 
-    private async Task RunExportAsync(string title, long totalBytes, int totalItems, Action<ExportProgressState> export, string successLog)
+    private async Task RunExportAsync(string title, long totalBytes, int totalItems, Action<ExportProgressState> export, string successLog, string? destinationPath = null)
     {
         if (_isExportRunning)
         {
             StatusText = "Another export is already running.";
+            return;
+        }
+
+        if (!EnsureEnoughDiskSpaceForExport(destinationPath, totalBytes))
+        {
             return;
         }
 
@@ -3212,6 +3330,53 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private bool EnsureEnoughDiskSpaceForExport(string? destinationPath, long estimatedBytes)
+    {
+        if (string.IsNullOrWhiteSpace(destinationPath) || estimatedBytes <= 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(destinationPath);
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return true;
+            }
+
+            var drive = new DriveInfo(root);
+            if (!drive.IsReady)
+            {
+                AppendLog($"Export disk-space check skipped because destination drive is not ready: {root}");
+                return true;
+            }
+
+            var reserveBytes = Math.Max(64L * 1024 * 1024, estimatedBytes / 20);
+            var requiredBytes = estimatedBytes > long.MaxValue - reserveBytes
+                ? long.MaxValue
+                : estimatedBytes + reserveBytes;
+            if (drive.AvailableFreeSpace >= requiredBytes)
+            {
+                AppendLog($"Export disk-space check passed: need about {FormatBytes(requiredBytes)}, available {FormatBytes(drive.AvailableFreeSpace)} on {root}.");
+                return true;
+            }
+
+            var message =
+                $"The export is estimated to need {FormatBytes(estimatedBytes)} plus a safety reserve ({FormatBytes(requiredBytes)} total), but {root} only has {FormatBytes(drive.AvailableFreeSpace)} free.";
+            StatusText = "Not enough free space for export.";
+            AppendLog($"Export blocked by disk-space preflight: {message}");
+            MessageBox.Show(this, message, "Not Enough Free Space", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Export disk-space check could not read destination capacity: {ex.Message}");
+            return true;
+        }
+    }
+
     private void CancelExport_Click(object sender, RoutedEventArgs e)
     {
         if (!_isExportRunning || _exportCancellation == null || _exportCancellation.IsCancellationRequested)
@@ -3223,6 +3388,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         StatusText = "Canceling export...";
         AppendLog("Export cancellation requested.");
         OnPropertyChanged(nameof(CanCancelExport));
+    }
+
+    private void CancelScan_Click(object sender, RoutedEventArgs e)
+    {
+        var requested = false;
+        if (_isMetadataScanRunning && _metadataScanCancellation is { IsCancellationRequested: false } metadataCancellation)
+        {
+            metadataCancellation.Cancel();
+            requested = true;
+        }
+
+        if (_isFileCarverRunning && _fileCarverCancellation is { IsCancellationRequested: false } fileCarverCancellation)
+        {
+            fileCarverCancellation.Cancel();
+            requested = true;
+        }
+
+        if (!requested)
+        {
+            return;
+        }
+
+        StatusText = "Canceling scan...";
+        AppendLog("Scan cancellation requested.");
+        OnPropertyChanged(nameof(CanCancelScan));
     }
 
     private static int CalculateExportPercent(ExportProgressSnapshot snapshot)
@@ -4748,6 +4938,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanRunMetadataScan));
         OnPropertyChanged(nameof(CanRunFileCarver));
         OnPropertyChanged(nameof(HasOpenDatabase));
+        OnPropertyChanged(nameof(CanCancelScan));
         OnPropertyChanged(nameof(CanCancelExport));
     }
 

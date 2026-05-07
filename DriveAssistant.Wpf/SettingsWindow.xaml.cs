@@ -22,6 +22,12 @@ public partial class SettingsWindow : Window
     private readonly AppSettings _settings;
     private readonly WorkerOption[] _workerOptions;
     private readonly ThemeOption[] _themeOptions = [new(WpfTheme.Dark), new(WpfTheme.Light)];
+    private readonly ScanProfileOption[] _scanProfileOptions =
+    [
+        new(ScanProfile.Balanced, "Balanced", "custom signatures and bounded XVD/XVC nested scan"),
+        new(ScanProfile.Fast, "Fast", "built-in signatures only; no nested container scan"),
+        new(ScanProfile.Exhaustive, "Exhaustive", "custom signatures and deeper XVD/XVC nested scan")
+    ];
 
     public SettingsWindow(AppSettings settings)
     {
@@ -31,6 +37,9 @@ public partial class SettingsWindow : Window
             .Select(count => new WorkerOption(count))
             .ToArray();
 
+        ScanProfileCombo.ItemsSource = _scanProfileOptions;
+        ScanProfileCombo.SelectedItem = _scanProfileOptions.FirstOrDefault(option => option.Value == _settings.ScanProfile)
+            ?? _scanProfileOptions.First(option => option.Value == ScanProfile.Balanced);
         FileCarverIntervalCombo.ItemsSource = IntervalOptions;
         FileCarverIntervalCombo.SelectedItem = IntervalOptions.FirstOrDefault(option => option.Value == _settings.FileCarverInterval)
             ?? IntervalOptions.First(option => option.Value == FileCarverInterval.Sector);
@@ -87,6 +96,9 @@ public partial class SettingsWindow : Window
         _settings.FileCarverInterval = FileCarverIntervalCombo.SelectedItem is IntervalOption option
             ? option.Value
             : FileCarverInterval.Sector;
+        _settings.ScanProfile = ScanProfileCombo.SelectedItem is ScanProfileOption profileOption
+            ? profileOption.Value
+            : ScanProfile.Balanced;
         _settings.MetadataIntervalClusters = metadataInterval;
         _settings.MetadataParallelWorkers = MetadataWorkersCombo.SelectedItem is WorkerOption workerOption
             ? ClampWorkerCount(workerOption.Count)
@@ -160,6 +172,14 @@ public sealed record IntervalOption(string Name, string SizeText, FileCarverInte
     public override string ToString()
     {
         return $"{Name} ({SizeText})";
+    }
+}
+
+public sealed record ScanProfileOption(ScanProfile Value, string Name, string Detail)
+{
+    public override string ToString()
+    {
+        return Name;
     }
 }
 

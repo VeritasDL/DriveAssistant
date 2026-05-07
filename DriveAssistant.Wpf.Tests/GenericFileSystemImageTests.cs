@@ -137,8 +137,11 @@ public sealed class GenericFileSystemImageTests
         var entries = ((IEnumerable)bootType.GetMethod("GetRoot")!.Invoke(boot, Array.Empty<object>())!).Cast<object>().ToArray();
         var header = Assert.Single(entries, entry => GetProperty<string>(entry, "Name") == "header.bin");
         var devkit = Assert.Single(entries, entry => GetProperty<string>(entry, "Name") == "devkit.ini");
+        var systemXvd = Assert.Single(entries, entry => GetProperty<string>(entry, "Name") == "system.xvd");
         Assert.Equal(0x6000, GetProperty<long>(header, "Offset"));
         Assert.Equal(0xA000, GetProperty<long>(devkit, "Offset"));
+        Assert.Equal("XVD dev title/content container", GetProperty<string>(systemXvd, "Kind"));
+        Assert.Contains("display name: Dashboard Shell", GetProperty<string>(systemXvd, "MetadataStatus"));
 
         using var output = TempFile.Empty();
         bootType.GetMethod("CopyFile", new[] { devkit.GetType(), typeof(string) })!.Invoke(boot, new[] { devkit, output.Path });
@@ -239,6 +242,56 @@ public sealed class GenericFileSystemImageTests
         var second = rows.Single(row => row.SourceOffset == 0x5000);
         Assert.Contains("header type 0x41", second.Detail);
         Assert.Contains("retail", second.Detail);
+    }
+
+    [Fact]
+    public void GenericCarver_BalancedProfileKeepsNestedXvdFileSystemsSeparate()
+    {
+        var image = new byte[0xA000];
+        WriteXvdHeader(image, 0, 0x41);
+        Encoding.ASCII.GetBytes("NTFS    ").CopyTo(image.AsSpan(0x3003));
+        image[0x355] = 0x55;
+        image[0x356] = 0xAA;
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "outer NTFS partition", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        var outer = Assert.Single(rows, row => row.Kind == "XVD");
+        var nested = Assert.Single(rows, row => row.Kind == "NTFS");
+        Assert.Equal("outer NTFS partition", outer.Source);
+        Assert.Contains("outer NTFS partition > ", nested.Source);
+        Assert.Contains("nested inside XVD/XVC container", nested.Detail);
+    }
+
+    [Fact]
+    public void GenericCarver_FastProfileSkipsNestedXvdFileSystemRows()
+    {
+        var image = new byte[0xA000];
+        WriteXvdHeader(image, 0, 0x41);
+        Encoding.ASCII.GetBytes("NTFS    ").CopyTo(image.AsSpan(0x3003));
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "outer NTFS partition", ScanProfile.Fast);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Single(rows);
+        Assert.DoesNotContain(rows, row => row.Kind == "NTFS");
+    }
+
+    [Fact]
+    public void GenericCarver_LargerSyntheticXboxFixtureFindsXvdAndFatxMarkers()
+    {
+        var image = new byte[0x900000];
+        WriteXvdHeader(image, 0x400000, 0x41);
+        Encoding.ASCII.GetBytes("FATX").CopyTo(image.AsSpan(0x500000));
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "large synthetic Xbox GPT/NTFS fixture", ScanProfile.Exhaustive);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Contains(rows, row => row.Kind == "XVD" && row.SourceOffset == 0x400000);
+        Assert.Contains(rows, row => row.Kind == "FATX" && row.Source.Contains(">"));
     }
 
     [Fact]
@@ -380,7 +433,7 @@ public sealed class GenericFileSystemImageTests
 
     private static byte[] CreateXbfsPayload()
     {
-        var payload = new byte[0x6000];
+        var payload = new byte[0xC000];
         var header = payload.AsSpan(0, 0x400);
         Encoding.ASCII.GetBytes("SFBX").CopyTo(header);
         header[4] = 1;
@@ -388,7 +441,10 @@ public sealed class GenericFileSystemImageTests
         BinaryPrimitives.WriteUInt16LittleEndian(header[6..], 0x000F);
         WriteXbfsEntry(header, 1, offsetPages: 0x6, sizePages: 0x4);
         WriteXbfsEntry(header, 2, offsetPages: 0xA, sizePages: 0x1);
+        WriteXbfsEntry(header, 6, offsetPages: 0xE, sizePages: 0x4);
         Encoding.ASCII.GetBytes("xbfs-test").CopyTo(payload.AsSpan(0x4000));
+        WriteXvdHeader(payload, 0x8000, 0x06);
+        Encoding.ASCII.GetBytes("""<Package><DisplayName>Dashboard Shell</DisplayName></Package>""").CopyTo(payload.AsSpan(0x9200));
         return payload;
     }
 

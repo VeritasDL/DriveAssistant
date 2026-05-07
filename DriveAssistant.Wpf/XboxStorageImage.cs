@@ -1118,17 +1118,39 @@ public sealed class XboxBootFileSystemVolume : GenericFileSystemVolume
             }
 
             var name = GetFileName(index);
+            var kind = "File";
+            var attributes = $"Entry {index}";
+            var metadataStatus = $"XBFS entry {index}, {sizePages:N0} page(s)";
+            if (name.EndsWith(".xvd", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".xvc", StringComparison.OrdinalIgnoreCase))
+            {
+                var metadata = GenericFileCarver.TryReadXvdMetadata(stream, physicalOffset, length);
+                if (metadata != null)
+                {
+                    kind = $"XVD {metadata.Classification}";
+                    var displayName = string.IsNullOrWhiteSpace(metadata.DisplayName)
+                        ? string.Empty
+                        : $", display name: {metadata.DisplayName}";
+                    attributes = $"Entry {index}, {metadata.Classification}{displayName}";
+                    metadataStatus = $"{metadata.Detail}; XBFS entry {index}, {sizePages:N0} page(s)";
+                }
+                else
+                {
+                    kind = name.EndsWith(".xvc", StringComparison.OrdinalIgnoreCase) ? "XVC" : "XVD";
+                    metadataStatus = $"{kind} container candidate; XBFS entry {index}, {sizePages:N0} page(s)";
+                }
+            }
+
             entries.Add(new GenericFileSystemEntry
             {
                 Volume = volume,
                 Path = "/" + name,
                 Name = name,
-                Kind = "File",
+                Kind = kind,
                 Length = length,
                 Offset = physicalOffset,
                 Cluster = offsetPages,
-                Attributes = $"Entry {index}",
-                MetadataStatus = $"XBFS entry {index}, {sizePages:N0} page(s)",
+                Attributes = attributes,
+                MetadataStatus = metadataStatus,
                 Extents = [new FileExtent(physicalOffset, length)]
             });
         }

@@ -122,10 +122,28 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="12" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="File carver interval" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <ComboBox x:Name="FileCarverIntervalCombo" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34">
+                    <TextBlock Text="Scan profile" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ScanProfileCombo" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Detail}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
+                                </Grid>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="2" Text="File carver interval" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="FileCarverIntervalCombo" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid>
@@ -140,22 +158,22 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <TextBlock Grid.Row="2" Text="Metadata interval clusters" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <TextBox x:Name="MetadataIntervalTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" />
+                    <TextBlock Grid.Row="4" Text="Metadata interval clusters" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <TextBox x:Name="MetadataIntervalTextBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" />
 
-                    <TextBlock Grid.Row="4" Text="Log to file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <CheckBox x:Name="EnableFileLoggingCheckBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                    <TextBlock Grid.Row="6" Text="Log to file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <CheckBox x:Name="EnableFileLoggingCheckBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Left" />
 
-                    <TextBlock Grid.Row="6" Text="Log file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <TextBox x:Name="LogFileTextBox" Grid.Row="6" Grid.Column="1" Margin="0,0,10,0" />
-                    <Button Grid.Row="6" Grid.Column="2" Content="Browse" MinWidth="104" Click="BrowseLog_Click" />
+                    <TextBlock Grid.Row="8" Text="Log file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <TextBox x:Name="LogFileTextBox" Grid.Row="8" Grid.Column="1" Margin="0,0,10,0" />
+                    <Button Grid.Row="8" Grid.Column="2" Content="Browse" MinWidth="104" Click="BrowseLog_Click" />
 
-                    <TextBlock Grid.Row="8" Text="Custom carvers file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <TextBox x:Name="CustomCarversTextBox" Grid.Row="8" Grid.Column="1" Margin="0,0,10,0" />
-                    <Button Grid.Row="8" Grid.Column="2" Content="Browse" MinWidth="104" Click="BrowseCustomCarvers_Click" />
+                    <TextBlock Grid.Row="10" Text="Custom carvers file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <TextBox x:Name="CustomCarversTextBox" Grid.Row="10" Grid.Column="1" Margin="0,0,10,0" />
+                    <Button Grid.Row="10" Grid.Column="2" Content="Browse" MinWidth="104" Click="BrowseCustomCarvers_Click" />
 
-                    <TextBlock Grid.Row="10" Text="Metadata scan workers" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <ComboBox x:Name="MetadataWorkersCombo" Grid.Row="10" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34">
+                    <TextBlock Grid.Row="12" Text="Metadata scan workers" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="MetadataWorkersCombo" Grid.Row="12" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid>
@@ -170,8 +188,8 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <TextBlock Grid.Row="12" Text="Theme" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                    <ComboBox x:Name="ThemeCombo" Grid.Row="12" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34" />
+                    <TextBlock Grid.Row="14" Text="Theme" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ThemeCombo" Grid.Row="14" Grid.Column="1" Grid.ColumnSpan="2" MinHeight="34" />
                 </Grid>
             </Border>
 

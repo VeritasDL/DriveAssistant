@@ -23,6 +23,8 @@ public sealed record GenericCarvedFile(
 
 public sealed record GenericCarverMatch(string Name, string Extension, long Size, string Detail);
 
+internal sealed record XvdContainerMetadata(byte HeaderType, string Classification, string? DisplayName, string Detail);
+
 public sealed class GenericFileCarver
 {
     private const int HeaderBufferSize = 0x300;
@@ -33,9 +35,10 @@ public sealed class GenericFileCarver
     private readonly long _displayBaseOffset;
     private readonly long _interval;
     private readonly string _sourceName;
+    private readonly ScanProfile _scanProfile;
     private readonly List<CustomSignatureDefinition> _customSignatures = [];
 
-    public GenericFileCarver(string sourcePath, long scanStart, long scanLength, long displayBaseOffset, long interval, string sourceName)
+    public GenericFileCarver(string sourcePath, long scanStart, long scanLength, long displayBaseOffset, long interval, string sourceName, ScanProfile scanProfile = ScanProfile.Balanced)
     {
         _sourcePath = sourcePath;
         _scanStart = Math.Max(0, scanStart);
@@ -43,6 +46,7 @@ public sealed class GenericFileCarver
         _displayBaseOffset = displayBaseOffset;
         _interval = Math.Max(1, interval);
         _sourceName = sourceName;
+        _scanProfile = scanProfile;
     }
 
     public void SetCustomSignatures(IEnumerable<CustomSignatureDefinition>? definitions)
@@ -120,7 +124,7 @@ public sealed class GenericFileCarver
 
                 if (match != null)
                 {
-                    rows.Add(new GenericCarvedFile(
+                    var file = new GenericCarvedFile(
                         BuildFileName(relative, match),
                         match.Extension.TrimStart('.').ToUpperInvariant(),
                         _sourcePath,
@@ -128,7 +132,9 @@ public sealed class GenericFileCarver
                         _displayBaseOffset + relative,
                         Math.Min(match.Size, readableLength - relative),
                         _sourceName,
-                        match.Detail));
+                        match.Detail);
+                    rows.Add(file);
+                    AddNestedContainerRows(rows, stream, file, match, cancellationToken);
                 }
 
                 var step = relative / _interval;
@@ -143,6 +149,104 @@ public sealed class GenericFileCarver
 
         progress?.Report((int)Math.Min(int.MaxValue, steps));
         return rows;
+    }
+
+    private void AddNestedContainerRows(List<GenericCarvedFile> rows, FileStream stream, GenericCarvedFile outerFile, GenericCarverMatch outerMatch, CancellationToken cancellationToken)
+    {
+        if (_scanProfile == ScanProfile.Fast || outerFile.Size <= 0)
+        {
+            return;
+        }
+
+        if (!outerMatch.Extension.Equals(".xvd", StringComparison.OrdinalIgnoreCase)
+            && !outerMatch.Extension.Equals(".xvc", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var scanLimit = _scanProfile == ScanProfile.Exhaustive
+            ? outerFile.Size
+            : Math.Min(outerFile.Size, 0x10000000L);
+        var nestedRows = FindNestedFileSystems(
+            stream,
+            outerFile.SourceOffset,
+            scanLimit,
+            outerFile.DisplayOffset,
+            $"{_sourceName} > {outerFile.Name}",
+            cancellationToken);
+        rows.AddRange(nestedRows);
+    }
+
+    private static IReadOnlyList<GenericCarvedFile> FindNestedFileSystems(
+        FileStream stream,
+        long containerOffset,
+        long scanLength,
+        long displayBaseOffset,
+        string sourceName,
+        CancellationToken cancellationToken)
+    {
+        const long firstCandidateOffset = 0x1000;
+        const int probeLength = 0x200;
+        const long alignment = 0x1000;
+
+        var rows = new List<GenericCarvedFile>();
+        var seen = new HashSet<long>();
+        var probe = new byte[probeLength];
+        for (var relative = firstCandidateOffset; relative + probeLength <= scanLength; relative += alignment)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            stream.Position = containerOffset + relative;
+            var read = stream.Read(probe, 0, probe.Length);
+            if (read < 0x5A)
+            {
+                break;
+            }
+
+            var match = TryMatchNestedFileSystem(probe.AsSpan(0, read));
+            if (match == null || !seen.Add(relative))
+            {
+                continue;
+            }
+
+            var size = Math.Max(0, scanLength - relative);
+            rows.Add(new GenericCarvedFile(
+                $"{match.Value.Kind.ToLowerInvariant()}_inside_xvd_{relative:X16}.img",
+                match.Value.Kind,
+                stream.Name,
+                containerOffset + relative,
+                displayBaseOffset + relative,
+                size,
+                sourceName,
+                $"{match.Value.Detail}; nested inside XVD/XVC container; outer container and nested result are kept as separate rows"));
+        }
+
+        return rows;
+    }
+
+    private static (string Kind, string Detail)? TryMatchNestedFileSystem(ReadOnlySpan<byte> header)
+    {
+        if (header.Length >= 0x5A && StartsWith(header[3..], "NTFS    "u8))
+        {
+            return ("NTFS", "Nested NTFS filesystem boot sector");
+        }
+
+        if (header.Length >= 0x5A && StartsWith(header[3..], "EXFAT   "u8))
+        {
+            return ("EXFAT", "Nested exFAT filesystem boot sector");
+        }
+
+        if (header.Length >= 0x5A && StartsWith(header[82..], "FAT32   "u8))
+        {
+            return ("FAT32", "Nested FAT32 filesystem boot sector");
+        }
+
+        if (header.Length >= 4 && StartsWith(header, "FATX"u8))
+        {
+            return ("FATX", "Nested FATX filesystem header");
+        }
+
+        return null;
     }
 
     private static string BuildFileName(long offset, GenericCarverMatch match)
@@ -325,15 +429,14 @@ public sealed class GenericFileCarver
 
         if (header.Length >= 0x209 && StartsWith(header[0x200..], "MSFT-XVD"u8))
         {
-            var type = header[0x208];
             var size = TryGetXvdSize(stream, absoluteOffset, remainingLength);
-            var detail = BuildXvdDetail(type, TryFindXvdDisplayName(stream, absoluteOffset, size));
-            return new GenericCarverMatch(string.Empty, ".xvd", size, detail);
+            var metadata = TryReadXvdMetadata(stream, absoluteOffset, size);
+            return new GenericCarverMatch(string.Empty, ".xvd", size, metadata?.Detail ?? "Xbox One/Series XVD package");
         }
 
         if (StartsWith(header, "crdi-xvc"u8))
         {
-            return new GenericCarverMatch(string.Empty, ".xvi", EstimateUnknownSize(remainingLength), "Xbox One/Series XVI metadata; size is estimated");
+            return new GenericCarverMatch(string.Empty, ".xvc", EstimateUnknownSize(remainingLength), "Xbox One/Series XVC container; size is estimated");
         }
 
         return null;
@@ -640,7 +743,27 @@ public sealed class GenericFileCarver
             : $"{detail}; display name: {displayName}";
     }
 
-    private static string? TryFindXvdDisplayName(FileStream stream, long absoluteOffset, long size)
+    internal static XvdContainerMetadata? TryReadXvdMetadata(Stream stream, long absoluteOffset, long size)
+    {
+        Span<byte> header = stackalloc byte[0x300];
+        var read = ReadAt(stream, absoluteOffset, header);
+        if (read < 0x209 || !StartsWith(header[0x200..read], "MSFT-XVD"u8))
+        {
+            return null;
+        }
+
+        var type = header[0x208];
+        var displayName = TryFindXvdDisplayName(stream, absoluteOffset, size);
+        var detail = BuildXvdDetail(type, displayName);
+        var start = detail.IndexOf('(');
+        var end = detail.IndexOf(')', start + 1);
+        var classification = start >= 0 && end > start
+            ? detail[(start + 1)..end]
+            : "unknown";
+        return new XvdContainerMetadata(type, classification, displayName, detail);
+    }
+
+    private static string? TryFindXvdDisplayName(Stream stream, long absoluteOffset, long size)
     {
         const int scanChunkSize = 0x400000;
         const int overlapSize = 0x4000;
@@ -664,8 +787,7 @@ public sealed class GenericFileCarver
                 break;
             }
 
-            stream.Position = windowStart;
-            var read = stream.Read(buffer, 0, readable);
+            var read = ReadAt(stream, windowStart, buffer.AsSpan(0, readable));
             if (read <= 0)
             {
                 break;
@@ -681,12 +803,21 @@ public sealed class GenericFileCarver
         return null;
     }
 
+    private static int ReadAt(Stream stream, long offset, Span<byte> buffer)
+    {
+        lock (stream)
+        {
+            stream.Position = offset;
+            return stream.Read(buffer);
+        }
+    }
+
     private static string? TryFindDisplayNameInXmlAsciiRuns(ReadOnlySpan<byte> buffer)
     {
         const int maxXmlLength = 0x100000;
         for (var index = 0; index <= buffer.Length - 5; index++)
         {
-            if (!StartsWith(buffer[index..], "<?xml"u8))
+            if (!LooksLikeXmlStart(buffer[index..]))
             {
                 continue;
             }
@@ -713,6 +844,15 @@ public sealed class GenericFileCarver
         }
 
         return null;
+    }
+
+    private static bool LooksLikeXmlStart(ReadOnlySpan<byte> buffer)
+    {
+        return StartsWith(buffer, "<?xml"u8)
+               || StartsWith(buffer, "<Package"u8)
+               || StartsWith(buffer, "<Identity"u8)
+               || StartsWith(buffer, "<Properties"u8)
+               || StartsWith(buffer, "<Applications"u8);
     }
 
     private static int ReadAsciiRunLength(ReadOnlySpan<byte> value, int maxLength)

@@ -5,6 +5,13 @@ using System.Text.Json;
 
 namespace FATXTools.Wpf;
 
+public enum ScanProfile
+{
+    Fast,
+    Balanced,
+    Exhaustive
+}
+
 public sealed class AppSettings
 {
     public static readonly string DefaultCustomCarversFile = Path.Combine(
@@ -17,6 +24,8 @@ public sealed class AppSettings
         "settings.json");
 
     public FileCarverInterval FileCarverInterval { get; set; } = FileCarverInterval.Sector;
+
+    public ScanProfile ScanProfile { get; set; } = ScanProfile.Balanced;
 
     public int MetadataIntervalClusters { get; set; } = 1;
 
@@ -63,6 +72,7 @@ public sealed class AppSettings
         return new AppSettings
         {
             FileCarverInterval = FileCarverInterval,
+            ScanProfile = ScanProfile,
             MetadataIntervalClusters = MetadataIntervalClusters,
             MetadataParallelWorkers = MetadataParallelWorkers,
             LogFile = LogFile,
