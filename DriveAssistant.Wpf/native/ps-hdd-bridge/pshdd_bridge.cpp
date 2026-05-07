@@ -23,6 +23,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -47,6 +48,7 @@ constexpr int kInvalidArgument = 1;
 constexpr int kFailure = 2;
 constexpr int kBufferTooSmall = 3;
 constexpr uint64_t kDefaultEstimatedAllocationUnit = 0x1000;
+constexpr uint64_t kMaxUfsInodeScanCount = 100000000ULL;
 ProgressCallback g_progressCallback = nullptr;
 
 struct OffsetMetrics
@@ -545,6 +547,10 @@ ufs2_dinode normalizeUfsInode(const ufs2_dinode& source, bool swap)
 
 bool readProviderExact(io::data::DataProvider* provider, uint64_t offset, void* data, uint32_t length)
 {
+  if (!provider || offset > static_cast<uint64_t>(INT64_MAX)) {
+    return false;
+  }
+
   provider->seek(static_cast<int64_t>(offset));
   return provider->read(static_cast<char*>(data), length) == length;
 }
@@ -578,6 +584,23 @@ bool readUfsSuperblock(io::data::DataProvider* provider, fs& super, bool& needsS
   return false;
 }
 
+uint64_t validateUfsSuperblock(const fs& super)
+{
+  if (super.fs_ncg == 0 || super.fs_ipg == 0 || super.fs_fsize <= 0 || super.fs_bsize <= 0 ||
+      super.fs_bsize > 1024 * 1024 || super.fs_nindir <= 0 ||
+      super.fs_nindir > super.fs_bsize / static_cast<int32_t>(sizeof(uint64_t)) ||
+      super.fs_ncg > 100000 || super.fs_ipg > 10000000) {
+    throw std::runtime_error("UFS2 superblock values are outside expected bounds.");
+  }
+
+  const auto totalInodes = static_cast<uint64_t>(super.fs_ncg) * static_cast<uint64_t>(super.fs_ipg);
+  if (totalInodes == 0 || totalInodes > kMaxUfsInodeScanCount) {
+    throw std::runtime_error("UFS2 inode count is outside the bounded scan range.");
+  }
+
+  return totalInodes;
+}
+
 void appendExtentRun(std::vector<UfsDataExtent>& extents, uint64_t offset, uint64_t length)
 {
   if (length == 0) {
@@ -595,14 +618,36 @@ void appendExtentRun(std::vector<UfsDataExtent>& extents, uint64_t offset, uint6
   extents.push_back({ offset, length });
 }
 
-void appendDataBlockExtent(std::vector<UfsDataExtent>& extents, const fs& super, uint64_t block, uint64_t& remaining)
+bool tryUfsBlockOffset(const fs& super, int64_t block, uint64_t partitionLength, uint64_t& offset)
 {
-  if (block == 0 || remaining == 0) {
+  if (block <= 0 || super.fs_fsize <= 0) {
+    return false;
+  }
+
+  const auto fragmentSize = static_cast<uint64_t>(super.fs_fsize);
+  const auto blockValue = static_cast<uint64_t>(block);
+  if (blockValue > std::numeric_limits<uint64_t>::max() / fragmentSize) {
+    return false;
+  }
+
+  offset = blockValue * fragmentSize;
+  return offset < partitionLength && offset <= static_cast<uint64_t>(INT64_MAX);
+}
+
+void appendDataBlockExtent(
+  std::vector<UfsDataExtent>& extents,
+  const fs& super,
+  int64_t block,
+  uint64_t partitionLength,
+  uint64_t& remaining)
+{
+  uint64_t offset = 0;
+  if (remaining == 0 || !tryUfsBlockOffset(super, block, partitionLength, offset)) {
     return;
   }
 
-  const auto offset = block * static_cast<uint64_t>(super.fs_fsize);
-  const auto length = std::min<uint64_t>(static_cast<uint64_t>(super.fs_bsize), remaining);
+  const auto available = partitionLength - offset;
+  const auto length = std::min<uint64_t>(std::min<uint64_t>(static_cast<uint64_t>(super.fs_bsize), remaining), available);
   appendExtentRun(extents, offset, length);
   remaining -= length;
 }
@@ -613,6 +658,7 @@ void collectIndirectExtents(
   bool needsSwap,
   uint64_t tableBlock,
   int level,
+  uint64_t partitionLength,
   uint64_t& remaining,
   std::vector<UfsDataExtent>& extents,
   std::vector<uint64_t>& blockTables)
@@ -621,7 +667,16 @@ void collectIndirectExtents(
     return;
   }
 
-  const auto tableOffset = tableBlock * static_cast<uint64_t>(super.fs_fsize);
+  if (tableBlock > static_cast<uint64_t>(INT64_MAX)) {
+    return;
+  }
+
+  uint64_t tableOffset = 0;
+  if (!tryUfsBlockOffset(super, static_cast<int64_t>(tableBlock), partitionLength, tableOffset) ||
+      static_cast<uint64_t>(super.fs_bsize) > partitionLength - tableOffset) {
+    return;
+  }
+
   blockTables.push_back(tableOffset);
   std::vector<uint64_t> table(static_cast<size_t>(super.fs_bsize) / sizeof(uint64_t));
   if (!readProviderExact(provider, tableOffset, table.data(), static_cast<uint32_t>(super.fs_bsize))) {
@@ -631,15 +686,15 @@ void collectIndirectExtents(
   const auto count = std::min<int32_t>(super.fs_nindir, static_cast<int32_t>(table.size()));
   for (int32_t index = 0; index < count && remaining > 0; ++index) {
     auto block = needsSwap ? swap64Value(table[index]) : table[index];
-    if (block == 0) {
+    if (block == 0 || block > static_cast<uint64_t>(INT64_MAX)) {
       break;
     }
 
     if (level == 1) {
-      appendDataBlockExtent(extents, super, block, remaining);
+      appendDataBlockExtent(extents, super, static_cast<int64_t>(block), partitionLength, remaining);
     }
     else {
-      collectIndirectExtents(provider, super, needsSwap, block, level - 1, remaining, extents, blockTables);
+      collectIndirectExtents(provider, super, needsSwap, block, level - 1, partitionLength, remaining, extents, blockTables);
     }
   }
 }
@@ -649,20 +704,27 @@ std::vector<UfsDataExtent> collectInodeExtents(
   const fs& super,
   bool needsSwap,
   const ufs2_dinode& inode,
+  uint64_t partitionLength,
   std::vector<uint64_t>& blockTables)
 {
   std::vector<UfsDataExtent> extents;
   uint64_t remaining = inode.di_size;
   for (auto block : inode.di_db) {
-    appendDataBlockExtent(extents, super, static_cast<uint64_t>(block), remaining);
-    if (block == 0 || remaining == 0) {
+    appendDataBlockExtent(extents, super, block, partitionLength, remaining);
+    if (block <= 0 || remaining == 0) {
       break;
     }
   }
 
-  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[0]), 1, remaining, extents, blockTables);
-  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[1]), 2, remaining, extents, blockTables);
-  collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[2]), 3, remaining, extents, blockTables);
+  if (inode.di_ib[0] > 0) {
+    collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[0]), 1, partitionLength, remaining, extents, blockTables);
+  }
+  if (inode.di_ib[1] > 0) {
+    collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[1]), 2, partitionLength, remaining, extents, blockTables);
+  }
+  if (inode.di_ib[2] > 0) {
+    collectIndirectExtents(provider, super, needsSwap, static_cast<uint64_t>(inode.di_ib[2]), 3, partitionLength, remaining, extents, blockTables);
+  }
   return extents;
 }
 
@@ -1381,13 +1443,8 @@ std::vector<UfsOrphanInode> scanOrphanInodes(disk::Partition* partition)
     throw std::runtime_error("Selected PlayStation partition is not a readable UFS2 file system.");
   }
 
-  if (super.fs_ncg == 0 || super.fs_ipg == 0 || super.fs_fsize <= 0 || super.fs_bsize <= 0 ||
-      super.fs_ncg > 100000 || super.fs_ipg > 10000000) {
-    throw std::runtime_error("UFS2 superblock values are outside expected bounds.");
-  }
-
-  const auto totalInodes64 = static_cast<uint64_t>(super.fs_ncg) * static_cast<uint64_t>(super.fs_ipg);
-  const auto totalInodes = static_cast<uint32_t>(std::min<uint64_t>(totalInodes64, UINT32_MAX));
+  const auto totalInodes64 = validateUfsSuperblock(super);
+  const auto totalInodes = static_cast<uint32_t>(totalInodes64);
   std::vector<UfsOrphanInode> rows;
   const auto progressEvery = std::max<uint32_t>(1, totalInodes / 500);
   std::unordered_set<uint64_t> seenSignatures;
@@ -1399,6 +1456,10 @@ std::vector<UfsOrphanInode> scanOrphanInodes(disk::Partition* partition)
     }
 
     const auto inodeOffset = inodeOffsetFor(super, inodeNumber);
+    if (inodeOffset > partition->getLength() || partition->getLength() - inodeOffset < sizeof(ufs2_dinode)) {
+      continue;
+    }
+
     ufs2_dinode rawInode{};
     if (!readProviderExact(provider, inodeOffset, &rawInode, sizeof(rawInode))) {
       continue;
@@ -1422,7 +1483,7 @@ std::vector<UfsOrphanInode> scanOrphanInodes(disk::Partition* partition)
     }
 
     std::vector<uint64_t> blockTables;
-    auto extents = collectInodeExtents(provider, super, needsSwap, inode, blockTables);
+    auto extents = collectInodeExtents(provider, super, needsSwap, inode, partition->getLength(), blockTables);
     if (extents.empty()) {
       continue;
     }
@@ -1523,7 +1584,16 @@ UfsOrphanInode findOrphanInode(disk::Partition* partition, uint32_t inodeNumber)
     throw std::runtime_error("Selected PlayStation partition is not a readable UFS2 file system.");
   }
 
+  const auto totalInodes = validateUfsSuperblock(super);
+  if (inodeNumber >= totalInodes) {
+    throw std::runtime_error("Requested UFS inode is outside the file system inode range.");
+  }
+
   const auto inodeOffset = inodeOffsetFor(super, inodeNumber);
+  if (inodeOffset > partition->getLength() || partition->getLength() - inodeOffset < sizeof(ufs2_dinode)) {
+    throw std::runtime_error("Requested UFS inode is outside the partition bounds.");
+  }
+
   ufs2_dinode rawInode{};
   if (!readProviderExact(provider, inodeOffset, &rawInode, sizeof(rawInode))) {
     throw std::runtime_error("Could not read UFS inode.");
@@ -1531,12 +1601,12 @@ UfsOrphanInode findOrphanInode(disk::Partition* partition, uint32_t inodeNumber)
 
   const auto inode = normalizeUfsInode(rawInode, needsSwap);
   const auto modeType = inode.di_mode & IFMT;
-  if (modeType != IFREG || inode.di_size == 0) {
-    throw std::runtime_error("Requested UFS inode is not a recoverable regular file.");
+  if (modeType != IFREG || inode.di_nlink != 0 || inode.di_size == 0 || inode.di_size > partition->getLength()) {
+    throw std::runtime_error("Requested UFS inode is not a recoverable deleted regular file.");
   }
 
   std::vector<uint64_t> blockTables;
-  auto extents = collectInodeExtents(provider, super, needsSwap, inode, blockTables);
+  auto extents = collectInodeExtents(provider, super, needsSwap, inode, partition->getLength(), blockTables);
   if (extents.empty()) {
     throw std::runtime_error("Requested UFS inode has no recoverable data blocks.");
   }

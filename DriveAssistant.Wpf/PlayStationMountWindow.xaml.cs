@@ -854,6 +854,8 @@ internal static class PlayStationNativeBridge
     private const int Success = 0;
     private const int BufferTooSmall = 3;
     private const string BridgeFileName = "pshdd-bridge.dll";
+    private const int MaxBridgeResponseBytes = 64 * 1024 * 1024;
+    private const int MaxVirtualReadBytes = 16 * 1024 * 1024;
 
     private static readonly object LoadGate = new();
     private static bool _loadAttempted;
@@ -1218,7 +1220,12 @@ internal static class PlayStationNativeBridge
                 var bridgePath = ResolveBridgePath()
                     ?? throw new FileNotFoundException($"Could not find {BridgeFileName}.");
 
-                _libraryHandle = NativeLibrary.Load(bridgePath);
+                _libraryHandle = NativeLibrary.Load(
+                    bridgePath,
+                    typeof(PlayStationNativeBridge).Assembly,
+                    DllImportSearchPath.AssemblyDirectory |
+                    DllImportSearchPath.SafeDirectories |
+                    DllImportSearchPath.UseDllDirectoryForDependencies);
                 _listPartitions = Marshal.GetDelegateForFunctionPointer<ListPartitionsDelegate>(
                     NativeLibrary.GetExport(_libraryHandle, "pshdd_list_partitions"));
                 _displayPartition = Marshal.GetDelegateForFunctionPointer<DisplayPartitionDelegate>(
@@ -1296,6 +1303,11 @@ internal static class PlayStationNativeBridge
         var status = call(buffer, buffer.Length, out var requiredBytes);
         if (status == BufferTooSmall)
         {
+            if (requiredBytes <= 0 || requiredBytes > MaxBridgeResponseBytes)
+            {
+                throw new InvalidOperationException($"Native PS HDD bridge requested an invalid response buffer size: {requiredBytes:N0} bytes.");
+            }
+
             buffer = new byte[Math.Max(requiredBytes, buffer.Length * 2)];
             status = call(buffer, buffer.Length, out requiredBytes);
         }
@@ -1343,7 +1355,7 @@ internal static class PlayStationNativeBridge
             }
 
             var disk = (PlayStationArchiveDisk)GCHandle.FromIntPtr(context).Target!;
-            var requestLength = length > int.MaxValue ? int.MaxValue : (int)length;
+            var requestLength = length > MaxVirtualReadBytes ? MaxVirtualReadBytes : (int)length;
             var buffer = new byte[requestLength];
             var read = disk.Read(checked((long)offset), buffer, 0, buffer.Length);
             if (read > 0)
@@ -1388,11 +1400,9 @@ internal static class PlayStationNativeBridge
     {
         var candidates = new[]
         {
-            Environment.GetEnvironmentVariable("PS_HDD_BRIDGE_DLL") ?? string.Empty,
             Path.Combine(AppContext.BaseDirectory, BridgeFileName),
             Path.Combine(AppContext.BaseDirectory, "tools", "ps-hdd", BridgeFileName),
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tools", "ps-hdd", BridgeFileName),
-            Path.Combine(Environment.CurrentDirectory, "tools", "ps-hdd", BridgeFileName)
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tools", "ps-hdd", BridgeFileName)
         };
 
         return candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path));
