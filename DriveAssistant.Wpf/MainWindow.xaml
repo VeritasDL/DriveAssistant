@@ -466,7 +466,47 @@
                                       ResizeDirection="Columns" />
 
                         <Border Grid.Column="2" Background="{DynamicResource DataGridRowBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
-                            <DataGrid x:Name="FilesGrid"
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Border Background="{DynamicResource DataGridHeaderBgBrush}"
+                                        BorderBrush="{DynamicResource LineSoftBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        CornerRadius="6,6,0,0"
+                                        Padding="12,8">
+                                    <WrapPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Row colors"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,12,0"
+                                                   VerticalAlignment="Center" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusContiguousBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <TextBlock Text="Contiguous" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusFragmentedBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <TextBlock Text="Fragmented / collisions" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusFullyFragmentedBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <TextBlock Text="Fully fragmented / overwritten" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusEmptyBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <TextBlock Text="Empty / sparse / resident" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusUnrecoverableBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <TextBlock Text="Deleted / orphan inode / unrecoverable" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </WrapPanel>
+                                </Border>
+                                <DataGrid x:Name="FilesGrid"
+                                      Grid.Row="1"
                                       ItemsSource="{Binding Files}"
                                       SelectedItem="{Binding SelectedFile}"
                                       SelectionMode="Extended"
@@ -505,7 +545,8 @@
                                     <DataGridTextColumn Header="Runs" Binding="{Binding FragmentRunText}" SortMemberPath="FragmentRunCount" Width="74" MinWidth="62" CanUserResize="True" />
                                     <DataGridTextColumn Header="Collisions" Binding="{Binding CollisionText}" SortMemberPath="CollisionCount" Width="98" MinWidth="82" CanUserResize="True" />
                                 </DataGrid.Columns>
-                            </DataGrid>
+                                </DataGrid>
+                            </Grid>
                         </Border>
                     </Grid>
                 </Border>
