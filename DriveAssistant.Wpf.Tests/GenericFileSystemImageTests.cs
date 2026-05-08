@@ -209,6 +209,80 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void PlayStationStorageImage_ManagedPs4Reader_OpensOrbisFatPartitionWithoutNativeBridge()
+    {
+        using var imageFile = new TempFile(CreatePs4OrbisFat16Image());
+        using var keyFile = new TempFile(new byte[32]);
+
+        using var image = PlayStationStorageImage.Open(imageFile.Path, keyFile.Path);
+
+        var volume = Assert.Single(image.Volumes);
+        Assert.Equal("eap_vsh", volume.Name);
+        Assert.True(volume.IsLoaded);
+        Assert.Equal("PlayStation 4 HDD (managed)", volume.FamilyText);
+        Assert.Empty(volume.GetRoot());
+    }
+
+    [Fact]
+    public void PlayStationVolume_ParsesDeepUfsMetadataRowsIncludingNameOnlyCandidates()
+    {
+        var json = """
+            {
+              "partition":"user",
+              "files":[
+                {
+                  "name":"SAVE.DAT",
+                  "type":"UFS dirent slack candidate",
+                  "inode":0,
+                  "metadataOffset":"0x1234",
+                  "recordLength":16,
+                  "fileType":8,
+                  "nameLength":8,
+                  "isDeleted":true,
+                  "metadataStatus":"Slack dirent has no inode pointer; recoverability: Name only",
+                  "fragmentationStatus":"Name only"
+                },
+                {
+                  "name":"RECOVER.BIN",
+                  "type":"Deleted UFS dirent with inode",
+                  "inode":42,
+                  "inodeOffset":"0x2000",
+                  "direntOffset":"0x3000",
+                  "recordLength":20,
+                  "fileType":8,
+                  "nameLength":11,
+                  "isDeleted":true,
+                  "metadataStatus":"Deleted dirent correlated to orphan inode; recoverability: High",
+                  "size":5,
+                  "dataOffsetCount":1,
+                  "dataRunCount":1,
+                  "largestRunBytes":5,
+                  "fragmentationStatus":"Contiguous",
+                  "dataRanges":"0x4000+0x5",
+                  "dataOffsets":"0x4000"
+                }
+              ]
+            }
+            """;
+        var volume = new PlayStationVolume("image.img", "keys.bin", "user", 0, 1024, new FakePlayStationOperations(json));
+
+        var rows = volume.ScanDeletedInodes();
+
+        var nameOnly = Assert.Single(rows, row => row.Name == "SAVE.DAT");
+        Assert.Equal(0u, nameOnly.Inode);
+        Assert.Equal("UFS dirent slack candidate", nameOnly.Kind);
+        Assert.True(nameOnly.IsDeleted);
+        Assert.Equal(0x1234, nameOnly.Offset);
+        Assert.Contains("Name only", nameOnly.MetadataStatus);
+
+        var inodeBacked = Assert.Single(rows, row => row.Name == "RECOVER.BIN");
+        Assert.Equal(42u, inodeBacked.Inode);
+        Assert.Equal(5, inodeBacked.Size);
+        Assert.Equal(0x3000, inodeBacked.Offset);
+        Assert.Equal("Contiguous", inodeBacked.FragmentationStatus);
+    }
+
+    [Fact]
     public void NtfsBitmapReader_CollapsesAllocatedBitsIntoRuns()
     {
         using var bitmap = new MemoryStream(new byte[] { 0b0001_1110, 0b1000_0001 });
@@ -520,6 +594,39 @@ public sealed class GenericFileSystemImageTests
         return image;
     }
 
+    private static byte[] CreatePs4OrbisFat16Image()
+    {
+        const int sectorSize = 512;
+        const ulong firstPartitionLba = 0x10;
+        const uint partitionSectors = 0x40;
+        var image = new byte[(int)((firstPartitionLba + partitionSectors + 1) * sectorSize)];
+
+        var header = image.AsSpan(sectorSize, sectorSize);
+        Encoding.ASCII.GetBytes("EFI PART").CopyTo(header);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[72..], 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[80..], 0x80);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[84..], 0x80);
+
+        var entry = image.AsSpan(sectorSize * 2, 0x80);
+        new Guid(0x6e0c5310, 0x8445, 0x4066, 0xb5, 0x71, 0x9b, 0x65, 0xfd, 0xb7, 0x59, 0x35).TryWriteBytes(entry);
+        Guid.Parse("11111111-2222-3333-4444-555555555555").TryWriteBytes(entry[16..]);
+        BinaryPrimitives.WriteUInt64LittleEndian(entry[32..], firstPartitionLba);
+        BinaryPrimitives.WriteUInt64LittleEndian(entry[40..], firstPartitionLba + partitionSectors);
+
+        var boot = image.AsSpan((int)(firstPartitionLba * sectorSize), sectorSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[11..], sectorSize);
+        boot[13] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[14..], 1);
+        boot[16] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[17..], 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[19..], (ushort)partitionSectors);
+        boot[21] = 0xF8;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[22..], 1);
+        boot[510] = 0x55;
+        boot[511] = 0xAA;
+        return image;
+    }
+
     private static void WriteExFatEntrySet(
         byte[] image,
         int offset,
@@ -591,6 +698,36 @@ public sealed class GenericFileSystemImageTests
             catch
             {
             }
+        }
+    }
+
+    private sealed class FakePlayStationOperations(string deletedJson) : IPlayStationVolumeOperations
+    {
+        public string FamilyText => "Fake";
+
+        public string ListFilesJson(string imagePath, string keyPath, PlayStationVolume volume)
+        {
+            return """{"files":[]}""";
+        }
+
+        public void CopyFile(string imagePath, string keyPath, PlayStationVolume volume, PlayStationFileEntry entry, string outputPath)
+        {
+            throw new NotSupportedException();
+        }
+
+        public string DecryptToFile(string imagePath, string keyPath, PlayStationVolume volume, string outputPath)
+        {
+            throw new NotSupportedException();
+        }
+
+        public string ListDeletedInodesJson(string imagePath, string keyPath, PlayStationVolume volume)
+        {
+            return deletedJson;
+        }
+
+        public string ExportDeletedInode(string imagePath, string keyPath, PlayStationVolume volume, uint inodeNumber, string outputPath)
+        {
+            throw new NotSupportedException();
         }
     }
 }

@@ -8,13 +8,64 @@ using System.Text.RegularExpressions;
 
 namespace FATXTools.Wpf;
 
+internal interface IPlayStationVolumeOperations
+{
+    string FamilyText { get; }
+
+    string ListFilesJson(string imagePath, string keyPath, PlayStationVolume volume);
+
+    void CopyFile(string imagePath, string keyPath, PlayStationVolume volume, PlayStationFileEntry entry, string outputPath);
+
+    string DecryptToFile(string imagePath, string keyPath, PlayStationVolume volume, string outputPath);
+
+    string ListDeletedInodesJson(string imagePath, string keyPath, PlayStationVolume volume);
+
+    string ExportDeletedInode(string imagePath, string keyPath, PlayStationVolume volume, uint inodeNumber, string outputPath);
+}
+
+internal sealed class NativePlayStationVolumeOperations : IPlayStationVolumeOperations
+{
+    public static NativePlayStationVolumeOperations Instance { get; } = new();
+
+    public string FamilyText => "PlayStation HDD";
+
+    private NativePlayStationVolumeOperations()
+    {
+    }
+
+    public string ListFilesJson(string imagePath, string keyPath, PlayStationVolume volume)
+    {
+        return PlayStationNativeBridge.ListFilesJson(imagePath, keyPath, volume.Name);
+    }
+
+    public void CopyFile(string imagePath, string keyPath, PlayStationVolume volume, PlayStationFileEntry entry, string outputPath)
+    {
+        PlayStationNativeBridge.ExportFile(imagePath, keyPath, volume.Name, entry.Path, outputPath);
+    }
+
+    public string DecryptToFile(string imagePath, string keyPath, PlayStationVolume volume, string outputPath)
+    {
+        return PlayStationNativeBridge.DecryptPartition(imagePath, keyPath, volume.Name, outputPath);
+    }
+
+    public string ListDeletedInodesJson(string imagePath, string keyPath, PlayStationVolume volume)
+    {
+        return PlayStationNativeBridge.ListDeletedInodesJson(imagePath, keyPath, volume.Name);
+    }
+
+    public string ExportDeletedInode(string imagePath, string keyPath, PlayStationVolume volume, uint inodeNumber, string outputPath)
+    {
+        return PlayStationNativeBridge.ExportDeletedInode(imagePath, keyPath, volume.Name, inodeNumber, outputPath);
+    }
+}
+
 public sealed class PlayStationStorageImage : IDisposable
 {
     private static readonly Regex PartitionLinePattern = new(
         @"^(?<name>\S+)\s+(?<start>[0-9a-fA-F]+)\s+(?<end>[0-9a-fA-F]+)\s+(?<length>[0-9a-fA-F]+)\s*$",
         RegexOptions.Compiled);
 
-    private PlayStationStorageImage(string imagePath, string keyPath, IReadOnlyList<PlayStationVolume> volumes)
+    internal PlayStationStorageImage(string imagePath, string keyPath, IReadOnlyList<PlayStationVolume> volumes)
     {
         ImagePath = imagePath;
         KeyPath = keyPath;
@@ -29,14 +80,22 @@ public sealed class PlayStationStorageImage : IDisposable
 
     public static PlayStationStorageImage Open(string imagePath, string keyPath)
     {
+        if (ManagedPs4StorageImage.TryOpen(imagePath, keyPath, out var managedImage, out var managedError))
+        {
+            return managedImage;
+        }
+
         if (!PlayStationNativeBridge.IsAvailable)
         {
-            throw new InvalidOperationException("The native PlayStation HDD bridge is required for the unified filesystem view.");
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(managedError)
+                    ? "The PlayStation HDD image could not be opened by the managed PS4 reader and the native bridge is unavailable."
+                    : $"The PlayStation HDD image could not be opened by the managed PS4 reader: {managedError}");
         }
 
         var partitionText = PlayStationNativeBridge.ListPartitions(imagePath, keyPath);
         var volumes = ParsePartitions(partitionText)
-            .Select(row => new PlayStationVolume(imagePath, keyPath, row.Name, ParseHexInt64(row.Start), ParseHexInt64(row.Length)))
+            .Select(row => new PlayStationVolume(imagePath, keyPath, row.Name, ParseHexInt64(row.Start), ParseHexInt64(row.Length), NativePlayStationVolumeOperations.Instance))
             .ToList();
 
         if (volumes.Count == 0)
@@ -103,13 +162,15 @@ public sealed class PlayStationVolume
 {
     private readonly string _imagePath;
     private readonly string _keyPath;
+    private readonly IPlayStationVolumeOperations _operations;
     private readonly List<PlayStationFileEntry> _root = [];
     private bool _loadAttempted;
 
-    public PlayStationVolume(string imagePath, string keyPath, string name, long offset, long length)
+    internal PlayStationVolume(string imagePath, string keyPath, string name, long offset, long length, IPlayStationVolumeOperations operations)
     {
         _imagePath = imagePath;
         _keyPath = keyPath;
+        _operations = operations;
         Name = name;
         Offset = offset;
         Length = length;
@@ -125,7 +186,7 @@ public sealed class PlayStationVolume
 
     public string? LoadError { get; private set; }
 
-    public string FamilyText => "PlayStation HDD";
+    public string FamilyText => _operations.FamilyText;
 
     public long UsedSpace => GetAllEntries().Where(entry => !entry.IsDirectory).Sum(entry => Math.Max(0, entry.Length));
 
@@ -158,12 +219,12 @@ public sealed class PlayStationVolume
             return;
         }
 
-        PlayStationNativeBridge.ExportFile(_imagePath, _keyPath, Name, entry.Path, outputPath);
+        _operations.CopyFile(_imagePath, _keyPath, this, entry, outputPath);
     }
 
     public string DecryptToFile(string outputPath)
     {
-        return PlayStationNativeBridge.DecryptPartition(_imagePath, _keyPath, Name, outputPath);
+        return _operations.DecryptToFile(_imagePath, _keyPath, this, outputPath);
     }
 
     public IReadOnlyList<PlayStationFileEntry> ScanMetadata()
@@ -173,7 +234,7 @@ public sealed class PlayStationVolume
 
     public IReadOnlyList<PlayStationMetadataEntry> ScanDeletedInodes()
     {
-        var json = PlayStationNativeBridge.ListDeletedInodesJson(_imagePath, _keyPath, Name);
+        var json = _operations.ListDeletedInodesJson(_imagePath, _keyPath, this);
         using var document = JsonDocument.Parse(json);
         if (!document.RootElement.TryGetProperty("files", out var files) ||
             files.ValueKind != JsonValueKind.Array)
@@ -185,21 +246,24 @@ public sealed class PlayStationVolume
         foreach (var file in files.EnumerateArray())
         {
             var inode = GetJsonUInt32(file, "inode");
-            if (inode == 0)
+            var name = GetJsonString(file, "name");
+            var metadataStatus = GetJsonString(file, "metadataStatus");
+            var kind = GetJsonString(file, "type");
+            if (inode == 0 && string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(metadataStatus))
             {
                 continue;
             }
 
             rows.Add(new PlayStationMetadataEntry(
-                GetJsonString(file, "name"),
-                "Deleted UFS inode",
-                ParseFirstHex(GetJsonString(file, "inodeOffset")) ?? 0,
+                name,
+                string.IsNullOrWhiteSpace(kind) ? "Deleted UFS metadata" : kind,
+                ParseFirstHex(GetJsonString(file, "metadataOffset")) ?? ParseFirstHex(GetJsonString(file, "direntOffset")) ?? ParseFirstHex(GetJsonString(file, "inodeOffset")) ?? 0,
                 inode,
-                0,
-                8,
-                0,
-                true,
-                "Deleted PS4 UFS inode with recoverable block pointers",
+                (ushort)Math.Clamp(GetJsonInt32(file, "recordLength"), 0, ushort.MaxValue),
+                (byte)Math.Clamp(GetJsonInt32(file, "fileType"), 0, byte.MaxValue),
+                (byte)Math.Clamp(GetJsonInt32(file, "nameLength"), 0, byte.MaxValue),
+                GetJsonBool(file, "isDeleted", true),
+                string.IsNullOrWhiteSpace(metadataStatus) ? "Deleted PS4 UFS metadata candidate" : metadataStatus,
                 (long)Math.Min(GetJsonUInt64(file, "size"), long.MaxValue),
                 GetJsonInt32(file, "dataOffsetCount"),
                 GetJsonInt32(file, "dataRunCount"),
@@ -214,7 +278,7 @@ public sealed class PlayStationVolume
 
     public string ExportDeletedInode(uint inodeNumber, string outputPath)
     {
-        return PlayStationNativeBridge.ExportDeletedInode(_imagePath, _keyPath, Name, inodeNumber, outputPath);
+        return _operations.ExportDeletedInode(_imagePath, _keyPath, this, inodeNumber, outputPath);
     }
 
     public bool TryLoad()
@@ -227,7 +291,7 @@ public sealed class PlayStationVolume
         _loadAttempted = true;
         try
         {
-            var json = PlayStationNativeBridge.ListFilesJson(_imagePath, _keyPath, Name);
+            var json = _operations.ListFilesJson(_imagePath, _keyPath, this);
             _root.Clear();
             _root.AddRange(BuildEntries(ParseRows(json)));
             IsLoaded = true;
@@ -355,7 +419,8 @@ public sealed class PlayStationVolume
                 GetJsonString(file, "dataOffsets"),
                 GetJsonString(file, "inodeOffsets"),
                 GetJsonString(file, "direntOffsets"),
-                GetJsonString(file, "blocktableOffsets")));
+                GetJsonString(file, "blocktableOffsets"),
+                ParseFileExtents(GetJsonString(file, "dataRanges"))));
         }
 
         return rows;
@@ -423,6 +488,13 @@ public sealed class PlayStationVolume
             : 0;
     }
 
+    private static bool GetJsonBool(JsonElement element, string propertyName, bool defaultValue)
+    {
+        return element.TryGetProperty(propertyName, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : defaultValue;
+    }
+
     private static long? ParseFirstHex(string text)
     {
         var match = Regex.Match(text ?? string.Empty, @"(?:0x)?[0-9a-fA-F]+");
@@ -444,6 +516,28 @@ public sealed class PlayStationVolume
         return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var date)
             ? date
             : DateTime.MinValue;
+    }
+
+    private static IReadOnlyList<FileExtent> ParseFileExtents(string dataRanges)
+    {
+        if (string.IsNullOrWhiteSpace(dataRanges))
+        {
+            return [];
+        }
+
+        var extents = new List<FileExtent>();
+        foreach (Match match in Regex.Matches(dataRanges, @"0x(?<offset>[0-9a-fA-F]+)\+0x(?<length>[0-9a-fA-F]+)"))
+        {
+            if (long.TryParse(match.Groups["offset"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var offset) &&
+                long.TryParse(match.Groups["length"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var length) &&
+                offset >= 0 &&
+                length > 0)
+            {
+                extents.Add(new FileExtent(offset, length));
+            }
+        }
+
+        return extents;
     }
 }
 
@@ -469,7 +563,8 @@ public sealed class PlayStationFileEntry
         string dataOffsets,
         string inodeOffsets,
         string direntOffsets,
-        string blocktableOffsets)
+        string blocktableOffsets,
+        IReadOnlyList<FileExtent>? extents = null)
     {
         Volume = volume;
         Path = path;
@@ -491,6 +586,7 @@ public sealed class PlayStationFileEntry
         InodeOffsets = inodeOffsets;
         DirentOffsets = direntOffsets;
         BlocktableOffsets = blocktableOffsets;
+        Extents = extents ?? [];
         Offset = ParseFirstHex(dataOffsets) ?? ParseFirstHex(dataRanges) ?? 0;
     }
 
@@ -531,6 +627,8 @@ public sealed class PlayStationFileEntry
     public string BlocktableOffsets { get; }
 
     public long Offset { get; }
+
+    public IReadOnlyList<FileExtent> Extents { get; }
 
     public PlayStationFileEntry? Parent { get; set; }
 

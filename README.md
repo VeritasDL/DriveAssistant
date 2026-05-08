@@ -96,7 +96,7 @@ Self-contained Windows x64 publish:
 dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o .\publish\DriveAssistant-win-x64
 ```
 
-Release packages are built by `.github/workflows/release.yaml` for tags like `v0.3.54`. The workflow runs tests, publishes a self-contained Windows x64 ZIP, emits a SHA256 checksum, and creates or updates the GitHub release. If `WINDOWS_CODESIGN_PFX_BASE64` and `WINDOWS_CODESIGN_PFX_PASSWORD` repository secrets are configured, the workflow signs the Windows binaries before packaging.
+Release packages are built by `.github/workflows/release.yaml` for tags like `v0.3.55`. The workflow runs tests, publishes a self-contained Windows x64 ZIP, emits a SHA256 checksum, and creates or updates the GitHub release. If `WINDOWS_CODESIGN_PFX_BASE64` and `WINDOWS_CODESIGN_PFX_PASSWORD` repository secrets are configured, the workflow signs the Windows binaries before packaging.
 
 ## File Carving Notes
 
@@ -116,9 +116,37 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 ## Roadmap / TODO
 
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
-- Improve PlayStation bridge packaging so native helper binaries are easier to rebuild from source.
+- Continue PS4 deleted-file validation with images that contain known nonzero deleted UFS file data. The current managed PS4 reader loads the tested devkit raw image, exports active files, decrypts partitions, and finds name-only deleted dirent candidates, but that image does not prove full deleted-file data recovery.
+- Decide whether to remove the bundled PlayStation native bridge entirely or keep it as a PS3/manual-mount fallback. The unified PS4 image path now has managed Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support.
+- If the native PlayStation bridge is removed, port the separate PlayStation Mount window and remaining PS3 HDD paths to managed code first.
 - Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
-- Broaden integration tests around native PS4 deleted-inode export paths.
+- Broaden automated tests around managed PS4 deleted-inode export paths using fixtures with known recoverable deleted content.
+- Configure repository code-signing secrets if signed release binaries are required: `WINDOWS_CODESIGN_PFX_BASE64`, `WINDOWS_CODESIGN_PFX_PASSWORD`, and optionally `WINDOWS_CODESIGN_TIMESTAMP_URL`.
+
+## Contributors
+
+Contributors from the repository's git history:
+
+- aerosoul / aerosoul94
+- rain0x06
+- Mike Davis
+- ChainSwordCS
+- FreeTheTech101 / Alexander Georgiadis
+- RezTech
+- gaasedelen
+- dependabot[bot]
+
+The bundled PlayStation helper lineage comes from [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools), which credits flat_z, glevand, naehrwert, and 3141card, with contributions from Tdijital and jason098.
+
+## Sources / References
+
+- Existing FATXTools / Drive Assistant repository history, source code, tests, and local synthetic fixtures.
+- [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) for the PlayStation helper tooling lineage and native bridge compatibility target.
+- [DiscUtils.Ntfs 0.16.13](https://www.nuget.org/packages/DiscUtils.Ntfs) for NTFS parsing used by the Xbox GPT/NTFS reader.
+- [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
+- [Microsoft exFAT file system specification](https://learn.microsoft.com/windows/win32/fileio/exfat-specification) for exFAT layout reference.
+- [FreeBSD UFS dinode definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dinode.h), [directory entry definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dir.h), and [FFS superblock definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ffs/fs.h) for UFS2 metadata parsing and recovery heuristics.
+- [.NET application publishing documentation](https://learn.microsoft.com/dotnet/core/deploying/) for the self-contained Windows release package workflow.
 
 ## Documentation
 

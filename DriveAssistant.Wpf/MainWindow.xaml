@@ -484,23 +484,43 @@
                                                    Margin="0,0,12,0"
                                                    VerticalAlignment="Center" />
                                         <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusContiguousBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusContiguousBgBrush}" BorderBrush="#6CFFB0" BorderThickness="1.5" Margin="0,0,6,0">
+                                                <Border.Effect>
+                                                    <DropShadowEffect Color="#38D47B" BlurRadius="10" ShadowDepth="0" Opacity="0.8" />
+                                                </Border.Effect>
+                                            </Border>
                                             <TextBlock Text="Contiguous" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusFragmentedBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFragmentedBgBrush}" BorderBrush="#FFD166" BorderThickness="1.5" Margin="0,0,6,0">
+                                                <Border.Effect>
+                                                    <DropShadowEffect Color="#F5B84B" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
+                                                </Border.Effect>
+                                            </Border>
                                             <TextBlock Text="Fragmented / collisions" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusFullyFragmentedBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFullyFragmentedBgBrush}" BorderBrush="#FF8C6A" BorderThickness="1.5" Margin="0,0,6,0">
+                                                <Border.Effect>
+                                                    <DropShadowEffect Color="#FF704F" BlurRadius="10" ShadowDepth="0" Opacity="0.85" />
+                                                </Border.Effect>
+                                            </Border>
                                             <TextBlock Text="Fully fragmented / overwritten" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusEmptyBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusEmptyBgBrush}" BorderBrush="#7FB2FF" BorderThickness="1.5" Margin="0,0,6,0">
+                                                <Border.Effect>
+                                                    <DropShadowEffect Color="#5EA1FF" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
+                                                </Border.Effect>
+                                            </Border>
                                             <TextBlock Text="Empty / sparse / resident" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal">
-                                            <Border Width="12" Height="12" CornerRadius="2" Background="{DynamicResource StatusUnrecoverableBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" Margin="0,0,5,0" />
+                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusUnrecoverableBgBrush}" BorderBrush="#FF6B81" BorderThickness="1.5" Margin="0,0,6,0">
+                                                <Border.Effect>
+                                                    <DropShadowEffect Color="#FF5D73" BlurRadius="10" ShadowDepth="0" Opacity="0.86" />
+                                                </Border.Effect>
+                                            </Border>
                                             <TextBlock Text="Deleted / orphan inode / unrecoverable" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </WrapPanel>
