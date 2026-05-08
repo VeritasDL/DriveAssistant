@@ -7,6 +7,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Xunit;
@@ -212,6 +213,21 @@ public sealed class GenericFileSystemImageTests
     public void PlayStationStorageImage_ManagedPs4Reader_OpensOrbisFatPartitionWithoutNativeBridge()
     {
         using var imageFile = new TempFile(CreatePs4OrbisFat16Image());
+        using var keyFile = new TempFile(new byte[32]);
+
+        using var image = PlayStationStorageImage.Open(imageFile.Path, keyFile.Path);
+
+        var volume = Assert.Single(image.Volumes);
+        Assert.Equal("eap_vsh", volume.Name);
+        Assert.True(volume.IsLoaded);
+        Assert.Equal("PlayStation 4 HDD (managed)", volume.FamilyText);
+        Assert.Empty(volume.GetRoot());
+    }
+
+    [Fact]
+    public void PlayStationStorageImage_ManagedPs4Reader_OpensOrbisFatPartitionWithGptEntryIvOffset()
+    {
+        using var imageFile = new TempFile(CreatePs4OrbisFat16Image(gptEntryIndex: 6, encryptWithIvOffset: true));
         using var keyFile = new TempFile(new byte[32]);
 
         using var image = PlayStationStorageImage.Open(imageFile.Path, keyFile.Path);
@@ -624,7 +640,7 @@ public sealed class GenericFileSystemImageTests
         return image;
     }
 
-    private static byte[] CreatePs4OrbisFat16Image()
+    private static byte[] CreatePs4OrbisFat16Image(int gptEntryIndex = 0, bool encryptWithIvOffset = false)
     {
         const int sectorSize = 512;
         const ulong firstPartitionLba = 0x10;
@@ -637,7 +653,7 @@ public sealed class GenericFileSystemImageTests
         BinaryPrimitives.WriteUInt32LittleEndian(header[80..], 0x80);
         BinaryPrimitives.WriteUInt32LittleEndian(header[84..], 0x80);
 
-        var entry = image.AsSpan(sectorSize * 2, 0x80);
+        var entry = image.AsSpan(sectorSize * 2 + gptEntryIndex * 0x80, 0x80);
         new Guid(0x6e0c5310, 0x8445, 0x4066, 0xb5, 0x71, 0x9b, 0x65, 0xfd, 0xb7, 0x59, 0x35).TryWriteBytes(entry);
         Guid.Parse("11111111-2222-3333-4444-555555555555").TryWriteBytes(entry[16..]);
         BinaryPrimitives.WriteUInt64LittleEndian(entry[32..], firstPartitionLba);
@@ -652,9 +668,81 @@ public sealed class GenericFileSystemImageTests
         BinaryPrimitives.WriteUInt16LittleEndian(boot[19..], (ushort)partitionSectors);
         boot[21] = 0xF8;
         BinaryPrimitives.WriteUInt16LittleEndian(boot[22..], 1);
+        Encoding.ASCII.GetBytes("FAT16   ").CopyTo(boot[54..]);
         boot[510] = 0x55;
         boot[511] = 0xAA;
+        if (encryptWithIvOffset)
+        {
+            EncryptXtsPartition(image.AsSpan((int)(firstPartitionLba * sectorSize), (int)(partitionSectors * sectorSize)), (ulong)gptEntryIndex << 32, new byte[16], new byte[16]);
+        }
+
         return image;
+    }
+
+    private static void EncryptXtsPartition(Span<byte> data, ulong sectorBase, byte[] dataKey, byte[] tweakKey)
+    {
+        using var dataAes = CreateAes(dataKey);
+        using var tweakAes = CreateAes(tweakKey);
+        using var dataEncryptor = dataAes.CreateEncryptor();
+        using var tweakEncryptor = tweakAes.CreateEncryptor();
+        Span<byte> block = stackalloc byte[16];
+        Span<byte> tweak = stackalloc byte[16];
+        for (var sectorOffset = 0; sectorOffset + 512 <= data.Length; sectorOffset += 512)
+        {
+            tweak.Clear();
+            BinaryPrimitives.WriteUInt64LittleEndian(tweak, sectorBase + (ulong)(sectorOffset / 512));
+            TransformBlock(tweakEncryptor, tweak);
+            var sector = data.Slice(sectorOffset, 512);
+            for (var offset = 0; offset < sector.Length; offset += 16)
+            {
+                for (var index = 0; index < 16; index++)
+                {
+                    block[index] = (byte)(sector[offset + index] ^ tweak[index]);
+                }
+
+                TransformBlock(dataEncryptor, block);
+                for (var index = 0; index < 16; index++)
+                {
+                    sector[offset + index] = (byte)(block[index] ^ tweak[index]);
+                }
+
+                MultiplyTweak(tweak);
+            }
+        }
+    }
+
+    private static Aes CreateAes(byte[] key)
+    {
+        var aes = Aes.Create();
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+        aes.Key = key;
+        return aes;
+    }
+
+    private static void TransformBlock(ICryptoTransform transform, Span<byte> block)
+    {
+        var input = block.ToArray();
+        var output = new byte[16];
+        transform.TransformBlock(input, 0, input.Length, output, 0);
+        output.CopyTo(block);
+    }
+
+    private static void MultiplyTweak(Span<byte> tweak)
+    {
+        var carryIn = 0;
+        var carryOut = 0;
+        for (var index = 0; index < tweak.Length; index++)
+        {
+            carryOut = (tweak[index] >> 7) & 1;
+            tweak[index] = (byte)(((tweak[index] << 1) + carryIn) & 0xFF);
+            carryIn = carryOut;
+        }
+
+        if (carryOut != 0)
+        {
+            tweak[0] ^= 0x87;
+        }
     }
 
     private static void WriteExFatEntrySet(

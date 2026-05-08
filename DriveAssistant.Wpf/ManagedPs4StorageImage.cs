@@ -118,7 +118,8 @@ internal static class ManagedPs4StorageImage
                 fileSystem,
                 firstLba,
                 checked(firstLba * SectorSize),
-                checked((lastLba - firstLba) * SectorSize)));
+                checked((lastLba - firstLba) * SectorSize),
+                checked((ulong)index << 32)));
         }
 
         return rows
@@ -369,7 +370,32 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
 
     private EncryptedPs4PartitionReader OpenReader(string imagePath, string partitionName)
     {
-        return new EncryptedPs4PartitionReader(imagePath, GetPartition(partitionName), _key);
+        var partition = GetPartition(partitionName);
+        var candidates = new[] { partition.IvOffsetSectors, 0UL }
+            .Distinct()
+            .ToArray();
+
+        foreach (var sectorBase in candidates)
+        {
+            var reader = new EncryptedPs4PartitionReader(imagePath, partition, _key, sectorBase);
+            try
+            {
+                if (LooksReadable(reader, partition.FileSystem))
+                {
+                    return reader;
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            reader.Dispose();
+        }
+
+        throw new InvalidDataException($"PS4 partition '{partitionName}' did not decrypt to a supported {partition.FileSystem} filesystem with known IV offsets.");
     }
 
     private ManagedPs4Partition GetPartition(string partitionName)
@@ -377,6 +403,61 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
         return _partitions.TryGetValue(partitionName, out var partition)
             ? partition
             : throw new InvalidDataException($"PS4 partition '{partitionName}' was not found.");
+    }
+
+    private static bool LooksReadable(EncryptedPs4PartitionReader reader, ManagedPs4FileSystem fileSystem)
+    {
+        return fileSystem switch
+        {
+            ManagedPs4FileSystem.Ufs2 => LooksLikeUfs2(reader),
+            ManagedPs4FileSystem.Fat => LooksLikeFat(reader),
+            _ => false
+        };
+    }
+
+    private static bool LooksLikeUfs2(EncryptedPs4PartitionReader reader)
+    {
+        var data = reader.ReadBytes(65536, 1500);
+        for (var offset = 0; offset + 4 <= data.Length; offset += 4)
+        {
+            if (BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(offset, 4)) == 0x19540119)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeFat(EncryptedPs4PartitionReader reader)
+    {
+        var boot = reader.ReadBytes(0, 512);
+        if (boot[510] != 0x55 || boot[511] != 0xAA)
+        {
+            return false;
+        }
+
+        var bytesPerSector = BinaryPrimitives.ReadUInt16LittleEndian(boot.AsSpan(11, 2));
+        var sectorsPerCluster = boot[13];
+        var fatCount = boot[16];
+        var totalSectors16 = BinaryPrimitives.ReadUInt16LittleEndian(boot.AsSpan(19, 2));
+        var totalSectors32 = BinaryPrimitives.ReadUInt32LittleEndian(boot.AsSpan(32, 4));
+        var sectorsPerFat16 = BinaryPrimitives.ReadUInt16LittleEndian(boot.AsSpan(22, 2));
+        var sectorsPerFat32 = BinaryPrimitives.ReadUInt32LittleEndian(boot.AsSpan(36, 4));
+        if (bytesPerSector is not (512 or 1024 or 2048 or 4096) || sectorsPerCluster == 0 || fatCount == 0)
+        {
+            return false;
+        }
+
+        if ((totalSectors16 == 0 && totalSectors32 == 0) || (sectorsPerFat16 == 0 && sectorsPerFat32 == 0))
+        {
+            return false;
+        }
+
+        var type16 = Encoding.ASCII.GetString(boot.AsSpan(54, 8));
+        var type32 = Encoding.ASCII.GetString(boot.AsSpan(82, 8));
+        return type16.Contains("FAT", StringComparison.OrdinalIgnoreCase)
+               || type32.Contains("FAT", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FormatDate(DateTime date)
@@ -471,10 +552,13 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
     private readonly ManagedPs4Partition _partition;
     private readonly AesXtsDecryptor _decryptor;
 
-    public EncryptedPs4PartitionReader(string imagePath, ManagedPs4Partition partition, byte[] key)
+    private readonly ulong _sectorBase;
+
+    public EncryptedPs4PartitionReader(string imagePath, ManagedPs4Partition partition, byte[] key, ulong sectorBase)
     {
         _stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
         _partition = partition;
+        _sectorBase = sectorBase;
         _decryptor = new AesXtsDecryptor(key.AsSpan(0, 16).ToArray(), key.AsSpan(16, 16).ToArray());
     }
 
@@ -504,7 +588,7 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
                 continue;
             }
 
-            var sector = (ulong)((alignedOffset + blockOffset) / SectorSize);
+            var sector = _sectorBase + (ulong)((alignedOffset + blockOffset) / SectorSize);
             _decryptor.DecryptSector(buffer.AsSpan(blockOffset, SectorSize), sector);
         }
 
@@ -1927,7 +2011,7 @@ internal static class ManagedPs4UfsReader
     private static uint ReadUInt32(byte[] data, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset, 4));
 }
 
-internal sealed record ManagedPs4Partition(string Name, ManagedPs4FileSystem FileSystem, ulong FirstLba, ulong Offset, ulong Length);
+internal sealed record ManagedPs4Partition(string Name, ManagedPs4FileSystem FileSystem, ulong FirstLba, ulong Offset, ulong Length, ulong IvOffsetSectors);
 
 internal enum ManagedPs4FileSystem
 {

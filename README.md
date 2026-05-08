@@ -8,6 +8,7 @@ The codebase started as FATXTools, but the active application and published proj
 
 - Open raw `.img` images and HDD Raw Copy `.imgc` compressed images.
 - Browse mounted Xbox 360 FATX, original Xbox FATX, Xbox One/Series GPT/NTFS, XBFS, FAT32, exFAT, NTFS, and supported PlayStation partitions.
+- Open PS4/PS4 Pro/devkit Orbis HDD images that use either partition-relative XTS sectors or GPT-entry IV offsets.
 - Export files and folders without blocking the UI, with progress, cancellation, and disk-space preflight checks before large saves.
 - Scan filesystem metadata and show recovered/deleted entries in the main file table, with cancellation for long-running metadata scans.
 - Carve known file types from raw partitions with configurable scan intervals, fast/balanced/exhaustive scan profiles, cancellation, and custom signatures.
