@@ -112,6 +112,7 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 - Built-in text carving is intentionally disabled to avoid noisy result sets and long scans.
 - Custom carving signatures can be loaded from `custom_carvers.json`; keep custom patterns specific.
 - Nested XVD/XVC probing detects readable inner filesystem headers. It does not decrypt encrypted XVD content.
+- Xbox 360 XEX carving recognizes known executable magic variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 
 ## Roadmap / TODO
 

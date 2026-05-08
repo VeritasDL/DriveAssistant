@@ -6,9 +6,6 @@ namespace FATX.Analyzers.Signatures
 {
     class XEXSignature : FileSignature
     {
-        private const string XEX1Signature = "XEX1";
-        private const string XEX2Signature = "XEX2";
-
         public XEXSignature(Volume volume, long offset)
             : base(volume, offset)
         {
@@ -18,12 +15,17 @@ namespace FATX.Analyzers.Signatures
         public override bool Test()
         {
             byte[] magic = this.ReadBytes(4);
-            if (Encoding.ASCII.GetString(magic) == XEX2Signature)
+            if (magic.Length < 4 || magic[0] != (byte)'X' || magic[1] != (byte)'E' || magic[2] != (byte)'X')
             {
-                return true;
+                return false;
             }
 
-            return false;
+            return magic[3] == (byte)'0'
+                || magic[3] == (byte)'?'
+                || magic[3] == (byte)'-'
+                || magic[3] == (byte)'%'
+                || magic[3] == (byte)'1'
+                || magic[3] == (byte)'2';
         }
 
         public override void Parse()

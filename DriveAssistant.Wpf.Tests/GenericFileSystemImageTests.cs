@@ -369,6 +369,28 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void GenericCarver_DetectsAllKnownXbox360XexVariants()
+    {
+        var variants = new[] { "XEX0", "XEX?", "XEX-", "XEX%", "XEX1", "XEX2" };
+        var image = new byte[0x9000];
+
+        for (var index = 0; index < variants.Length; index++)
+        {
+            WriteXexHeader(image, index * 0x1000, variants[index], 0x240);
+        }
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "xbox 360 image", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        foreach (var variant in variants)
+        {
+            var row = Assert.Single(rows, row => row.Kind == "XEX" && row.Detail.Contains(variant));
+            Assert.Equal(0x240, row.Size);
+        }
+    }
+
+    [Fact]
     public void GenericCarver_DetectsPs4PkgAndPlayStationSelf()
     {
         var image = new byte[0x5000];
@@ -545,6 +567,14 @@ public sealed class GenericFileSystemImageTests
     {
         Encoding.ASCII.GetBytes("MSFT-XVD").CopyTo(image.AsSpan(offset + 0x200));
         image[offset + 0x208] = type;
+    }
+
+    private static void WriteXexHeader(byte[] image, int offset, string magic, uint fileSize)
+    {
+        Encoding.ASCII.GetBytes(magic).CopyTo(image.AsSpan(offset));
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(offset + 0x10), 0x20);
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(offset + 0x14), 0);
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(offset + 0x24), fileSize);
     }
 
     private static void WriteXbfsEntry(Span<byte> header, int index, uint offsetPages, uint sizePages)

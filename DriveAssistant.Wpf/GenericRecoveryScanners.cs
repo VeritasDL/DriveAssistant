@@ -399,11 +399,15 @@ public sealed class GenericFileCarver
             return pe;
         }
 
-        if ((StartsWith(header, "XEX2"u8) || StartsWith(header, "XEX1"u8)) && header.Length >= 0x20)
+        if (TryGetXbox360XexMagic(header, out var xexMagic) && header.Length >= 0x20)
         {
             var securityOffset = ReadUInt32BigEndian(header[0x10..]);
             var size = TryGetXexSize(stream, absoluteOffset, securityOffset, remainingLength);
-            return new GenericCarverMatch(string.Empty, ".xex", size > 0 ? size : EstimateUnknownSize(remainingLength), "Xbox executable");
+            return new GenericCarverMatch(
+                string.Empty,
+                ".xex",
+                size > 0 ? size : EstimateUnknownSize(remainingLength),
+                $"Xbox 360 XEX executable ({xexMagic})");
         }
 
         if (StartsWith(header, "XBEH"u8) && header.Length >= 0x154)
@@ -653,6 +657,30 @@ public sealed class GenericFileCarver
 
         var size = ReadUInt32BigEndian(buffer);
         return size > 0 && size <= remainingLength ? size : 0;
+    }
+
+    private static bool TryGetXbox360XexMagic(ReadOnlySpan<byte> header, out string magic)
+    {
+        magic = string.Empty;
+
+        if (header.Length < 4 || header[0] != (byte)'X' || header[1] != (byte)'E' || header[2] != (byte)'X')
+        {
+            return false;
+        }
+
+        var known = header[3] switch
+        {
+            (byte)'0' or (byte)'?' or (byte)'-' or (byte)'%' or (byte)'1' or (byte)'2' => true,
+            _ => false
+        };
+
+        if (!known)
+        {
+            return false;
+        }
+
+        magic = Encoding.ASCII.GetString(header[..4]);
+        return true;
     }
 
     private static long TryGetXvdSize(FileStream stream, long absoluteOffset, long remainingLength)
