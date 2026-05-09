@@ -8,7 +8,7 @@ The codebase started as FATXTools, but the active application and published proj
 
 - Open raw `.img` images and HDD Raw Copy `.imgc` compressed images.
 - Browse mounted Xbox 360 FATX, original Xbox FATX, Xbox One/Series GPT/NTFS, XBFS, FAT32, exFAT, NTFS, and supported PlayStation partitions.
-- Open PS4/PS4 Pro/devkit Orbis HDD images that use either partition-relative XTS sectors or GPT-entry IV offsets.
+- Open managed PS3 Cell HDD images and PS4/PS4 Pro/devkit Orbis HDD images. PS3 supports plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, dev_hdd0 UFS2, dev_hdd1 FAT, and VFLASH FAT partitions; PS4/Pro supports partition-relative XTS sectors and GPT-entry IV offsets.
 - Export files and folders without blocking the UI, with progress, cancellation, and disk-space preflight checks before large saves.
 - Scan filesystem metadata and show recovered/deleted entries in the main file table, with cancellation for long-running metadata scans.
 - Carve known file types from raw partitions with configurable scan intervals, fast/balanced/exhaustive scan profiles, cancellation, and custom signatures.
@@ -121,8 +121,7 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
 - Continue PS4 deleted-file validation with images that contain known nonzero deleted UFS file data. The current managed PS4 reader loads the tested devkit raw image, exports active files, decrypts partitions, and finds name-only deleted dirent candidates, but that image does not prove full deleted-file data recovery.
 - Research PS5 support separately from PS4 by adding `ssd0.*` partition discovery, validating tEXFAT/exFAT and UFS partition readers, and identifying what PS5 `bfs` user storage requires before claiming PS5 image support.
-- PlayStation HDD handling is managed in the WPF project. The old native PS-HDD bridge and mount-tool fallback have been removed; PS4 Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support are handled in C#.
-- Restore or extend PS3 HDD paths in managed code if PS3-specific mounting is needed again.
+- PlayStation HDD handling is managed in the WPF project. The old native PS-HDD bridge and mount-tool fallback have been removed; PS3 Cell disklabel/key derivation/decryption, PS4 Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support are handled in C#.
 - Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
 - Broaden automated tests around managed PS4 deleted-inode export paths using fixtures with known recoverable deleted content.
 - Configure repository code-signing secrets if signed release binaries are required: `WINDOWS_CODESIGN_PFX_BASE64`, `WINDOWS_CODESIGN_PFX_PASSWORD`, and optionally `WINDOWS_CODESIGN_TIMESTAMP_URL`.

@@ -368,7 +368,7 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
         return Flatten(entries).ToList();
     }
 
-    private EncryptedPs4PartitionReader OpenReader(string imagePath, string partitionName)
+    private IPlayStationPartitionReader OpenReader(string imagePath, string partitionName)
     {
         var partition = GetPartition(partitionName);
         var candidates = _key.Length >= 0x20
@@ -405,7 +405,7 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
             : throw new InvalidDataException($"PS4 partition '{partitionName}' was not found.");
     }
 
-    private static bool LooksReadable(EncryptedPs4PartitionReader reader, ManagedPs4FileSystem fileSystem)
+    private static bool LooksReadable(IPlayStationPartitionReader reader, ManagedPs4FileSystem fileSystem)
     {
         return fileSystem switch
         {
@@ -415,7 +415,7 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
         };
     }
 
-    private static bool LooksLikeUfs2(EncryptedPs4PartitionReader reader)
+    private static bool LooksLikeUfs2(IPlayStationPartitionReader reader)
     {
         var data = reader.ReadBytes(65536, 1500);
         for (var offset = 0; offset + 4 <= data.Length; offset += 4)
@@ -429,7 +429,7 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
         return false;
     }
 
-    private static bool LooksLikeFat(EncryptedPs4PartitionReader reader)
+    private static bool LooksLikeFat(IPlayStationPartitionReader reader)
     {
         var boot = reader.ReadBytes(0, 512);
         if (boot[510] != 0x55 || boot[511] != 0xAA)
@@ -545,7 +545,18 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
     }
 }
 
-internal sealed class EncryptedPs4PartitionReader : IDisposable
+internal interface IPlayStationPartitionReader : IDisposable
+{
+    ulong Length { get; }
+
+    bool BigEndian { get; }
+
+    void Read(long offset, Span<byte> destination);
+
+    byte[] ReadBytes(long offset, int count);
+}
+
+internal sealed class EncryptedPs4PartitionReader : IPlayStationPartitionReader
 {
     private const int SectorSize = 512;
     private readonly FileStream _stream;
@@ -565,6 +576,8 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
     }
 
     public ulong Length => _partition.Length;
+
+    public bool BigEndian => false;
 
     public void Read(long offset, Span<byte> destination)
     {
@@ -703,7 +716,7 @@ internal sealed class AesXtsDecryptor : IDisposable
 
 internal static class ManagedPs4FatReader
 {
-    public static List<PlayStationFileEntry> ReadEntries(EncryptedPs4PartitionReader reader)
+    public static List<PlayStationFileEntry> ReadEntries(IPlayStationPartitionReader reader)
     {
         var boot = reader.ReadBytes(0, 512);
         if (boot[510] != 0x55 || boot[511] != 0xAA)
@@ -746,7 +759,7 @@ internal static class ManagedPs4FatReader
     }
 
     private static List<PlayStationFileEntry> ReadFixedRootDirectory(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         byte[] fat,
         long dataOffset,
         int clusterSize,
@@ -759,7 +772,7 @@ internal static class ManagedPs4FatReader
     }
 
     private static List<PlayStationFileEntry> ReadDirectory(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         byte[] fat,
         long dataOffset,
         int clusterSize,
@@ -780,7 +793,7 @@ internal static class ManagedPs4FatReader
     }
 
     private static List<PlayStationFileEntry> ParseDirectory(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         byte[] fat,
         long dataOffset,
         int clusterSize,
@@ -1045,7 +1058,7 @@ internal static class ManagedPs4UfsReader
         [14] = "Whiteout"
     };
 
-    public static List<PlayStationFileEntry> ReadEntries(EncryptedPs4PartitionReader reader)
+    public static List<PlayStationFileEntry> ReadEntries(IPlayStationPartitionReader reader)
     {
         var super = ReadSuperblock(reader);
         var root = ReadInode(reader, super, RootInode);
@@ -1059,7 +1072,7 @@ internal static class ManagedPs4UfsReader
         return rows;
     }
 
-    public static List<ManagedUfsRecoveryRecord> ScanDeepMetadata(EncryptedPs4PartitionReader reader)
+    public static List<ManagedUfsRecoveryRecord> ScanDeepMetadata(IPlayStationPartitionReader reader)
     {
         var super = ReadSuperblock(reader);
         var totalInodes = ValidateSuperblock(super);
@@ -1120,7 +1133,7 @@ internal static class ManagedPs4UfsReader
     }
 
     private static List<ManagedUfsRecoveryRecord> ScanInodeTable(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         UfsSuperblock super,
         ulong totalInodes,
         UfsAllocationMap? allocationMap)
@@ -1190,7 +1203,7 @@ internal static class ManagedPs4UfsReader
         return rows;
     }
 
-    public static ManagedUfsRecoveryRecord FindDeletedInode(EncryptedPs4PartitionReader reader, uint inodeNumber)
+    public static ManagedUfsRecoveryRecord FindDeletedInode(IPlayStationPartitionReader reader, uint inodeNumber)
     {
         return ScanDeepMetadata(reader).FirstOrDefault(row => row.Inode == inodeNumber && row.Extents.Count > 0)
                ?? throw new InvalidDataException("Requested UFS inode is not a recoverable deleted regular file.");
@@ -1233,7 +1246,7 @@ internal static class ManagedPs4UfsReader
     }
 
     private static void LoadDirectory(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         UfsSuperblock super,
         UfsInode directory,
         string path,
@@ -1246,8 +1259,8 @@ internal static class ManagedPs4UfsReader
         while (cursor + 8 <= data.Length && cursor < (long)directory.Size && guard++ < 100000)
         {
             var record = data.AsSpan(cursor);
-            var inodeNumber = BinaryPrimitives.ReadUInt32LittleEndian(record);
-            var recordLength = BinaryPrimitives.ReadUInt16LittleEndian(record.Slice(4, 2));
+            var inodeNumber = ReadUInt32(record, 0, reader.BigEndian);
+            var recordLength = ReadUInt16(record, 4, reader.BigEndian);
             var fileType = record[6];
             var nameLength = record[7];
             if (inodeNumber == 0 || recordLength < 8 + nameLength || recordLength > data.Length - cursor || recordLength % 4 != 0)
@@ -1292,7 +1305,7 @@ internal static class ManagedPs4UfsReader
     }
 
     private static void ScanDirectoryForMetadata(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         UfsSuperblock super,
         UfsInode directory,
         string parentPath,
@@ -1309,7 +1322,7 @@ internal static class ManagedPs4UfsReader
             while (cursor + 8 <= block.Data.Length && guard++ < 100000)
             {
                 var recordOffset = block.Offset + cursor;
-                if (!TryParseDirent(block.Data.AsSpan(cursor), block.Data.Length - cursor, out var record))
+                if (!TryParseDirent(block.Data.AsSpan(cursor), block.Data.Length - cursor, reader.BigEndian, out var record))
                 {
                     break;
                 }
@@ -1335,6 +1348,7 @@ internal static class ManagedPs4UfsReader
                         record.RecordLength - minimum,
                         block.Offset,
                         parentPath,
+                        reader.BigEndian,
                         deletedByInode,
                         allocationMap,
                         rows);
@@ -1370,7 +1384,7 @@ internal static class ManagedPs4UfsReader
     }
 
     private static void AddDirentRecord(
-        EncryptedPs4PartitionReader reader,
+        IPlayStationPartitionReader reader,
         UfsSuperblock super,
         UfsDirentRecord record,
         long recordOffset,
@@ -1429,6 +1443,7 @@ internal static class ManagedPs4UfsReader
         int length,
         long blockOffset,
         string parentPath,
+        bool bigEndian,
         IReadOnlyDictionary<uint, ManagedUfsRecoveryRecord> deletedByInode,
         UfsAllocationMap? allocationMap,
         List<ManagedUfsRecoveryRecord> rows)
@@ -1436,7 +1451,7 @@ internal static class ManagedPs4UfsReader
         var end = Math.Min(directoryBlock.Length, relativeStart + length);
         for (var cursor = relativeStart; cursor + 8 <= end; cursor += 4)
         {
-            if (!TryParseDirent(directoryBlock.AsSpan(cursor), end - cursor, out var stale) ||
+            if (!TryParseDirent(directoryBlock.AsSpan(cursor), end - cursor, bigEndian, out var stale) ||
                 stale.Name is "." or "..")
             {
                 continue;
@@ -1512,7 +1527,7 @@ internal static class ManagedPs4UfsReader
             source);
     }
 
-    private static IReadOnlyList<UfsDirectoryBlock> ReadDirectoryBlocks(EncryptedPs4PartitionReader reader, UfsSuperblock super, UfsInode directory)
+    private static IReadOnlyList<UfsDirectoryBlock> ReadDirectoryBlocks(IPlayStationPartitionReader reader, UfsSuperblock super, UfsInode directory)
     {
         var blocks = new List<UfsDirectoryBlock>();
         var extents = CollectExtents(reader, super, directory);
@@ -1534,7 +1549,7 @@ internal static class ManagedPs4UfsReader
         return blocks;
     }
 
-    private static bool TryParseDirent(ReadOnlySpan<byte> data, int remaining, out UfsDirentRecord record)
+    private static bool TryParseDirent(ReadOnlySpan<byte> data, int remaining, bool bigEndian, out UfsDirentRecord record)
     {
         record = default;
         if (remaining < 8)
@@ -1542,8 +1557,8 @@ internal static class ManagedPs4UfsReader
             return false;
         }
 
-        var inode = BinaryPrimitives.ReadUInt32LittleEndian(data);
-        var recordLength = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(4, 2));
+        var inode = ReadUInt32(data, 0, bigEndian);
+        var recordLength = ReadUInt16(data, 4, bigEndian);
         var fileType = data[6];
         var nameLength = data[7];
         if (!DirentTypes.ContainsKey(fileType) ||
@@ -1575,7 +1590,7 @@ internal static class ManagedPs4UfsReader
         return true;
     }
 
-    private static byte[] ReadInodeData(EncryptedPs4PartitionReader reader, UfsSuperblock super, UfsInode inode)
+    private static byte[] ReadInodeData(IPlayStationPartitionReader reader, UfsSuperblock super, UfsInode inode)
     {
         var extents = CollectExtents(reader, super, inode);
         using var output = new MemoryStream();
@@ -1599,38 +1614,38 @@ internal static class ManagedPs4UfsReader
         return output.ToArray();
     }
 
-    private static UfsSuperblock ReadSuperblock(EncryptedPs4PartitionReader reader)
+    private static UfsSuperblock ReadSuperblock(IPlayStationPartitionReader reader)
     {
         var data = reader.ReadBytes(SuperBlockOffset, SuperBlockLength);
-        var magicOffset = FindMagicOffset(data);
+        var magicOffset = FindMagicOffset(data, reader.BigEndian);
         if (magicOffset < 0)
         {
             throw new InvalidDataException("Selected PlayStation partition is not a readable UFS2 file system.");
         }
 
         return new UfsSuperblock(
-            ReadInt32(data, 8),
-            ReadInt32(data, 12),
-            ReadInt32(data, 16),
-            ReadInt32(data, 20),
-            ReadUInt32(data, 44),
-            ReadInt32(data, 48),
-            ReadInt32(data, 52),
-            ReadInt32(data, 56),
-            ReadInt32(data, 96),
-            ReadInt32(data, 100),
-            ReadInt32(data, 116),
-            ReadUInt32(data, 120),
-            ReadInt32(data, 140),
-            ReadUInt32(data, 184),
-            ReadInt32(data, 188));
+            ReadInt32(data, 8, reader.BigEndian),
+            ReadInt32(data, 12, reader.BigEndian),
+            ReadInt32(data, 16, reader.BigEndian),
+            ReadInt32(data, 20, reader.BigEndian),
+            ReadUInt32(data, 44, reader.BigEndian),
+            ReadInt32(data, 48, reader.BigEndian),
+            ReadInt32(data, 52, reader.BigEndian),
+            ReadInt32(data, 56, reader.BigEndian),
+            ReadInt32(data, 96, reader.BigEndian),
+            ReadInt32(data, 100, reader.BigEndian),
+            ReadInt32(data, 116, reader.BigEndian),
+            ReadUInt32(data, 120, reader.BigEndian),
+            ReadInt32(data, 140, reader.BigEndian),
+            ReadUInt32(data, 184, reader.BigEndian),
+            ReadInt32(data, 188, reader.BigEndian));
     }
 
-    private static int FindMagicOffset(byte[] data)
+    private static int FindMagicOffset(byte[] data, bool bigEndian)
     {
         for (var offset = 0; offset + 4 <= data.Length; offset += 4)
         {
-            if (BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(offset, 4)) == Ufs2Magic)
+            if (ReadInt32(data, offset, bigEndian) == Ufs2Magic)
             {
                 return offset;
             }
@@ -1658,34 +1673,34 @@ internal static class ManagedPs4UfsReader
         return total;
     }
 
-    private static UfsInode ReadInode(EncryptedPs4PartitionReader reader, UfsSuperblock super, uint inodeNumber)
+    private static UfsInode ReadInode(IPlayStationPartitionReader reader, UfsSuperblock super, uint inodeNumber)
     {
         return ReadInode(reader, InodeOffset(super, inodeNumber));
     }
 
-    private static UfsInode ReadInode(EncryptedPs4PartitionReader reader, long offset)
+    private static UfsInode ReadInode(IPlayStationPartitionReader reader, long offset)
     {
         var data = reader.ReadBytes(offset, InodeSize);
         var direct = new long[NdAddr];
         var indirect = new long[NiAddr];
         for (var index = 0; index < NdAddr; index++)
         {
-            direct[index] = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(112 + index * 8, 8));
+            direct[index] = ReadInt64(data, 112 + index * 8, reader.BigEndian);
         }
 
         for (var index = 0; index < NiAddr; index++)
         {
-            indirect[index] = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(208 + index * 8, 8));
+            indirect[index] = ReadInt64(data, 208 + index * 8, reader.BigEndian);
         }
 
         return new UfsInode(
-            BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(0, 2)),
-            BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(2, 2)),
-            BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(16, 8)),
-            BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(24, 8)),
-            BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(32, 8)),
-            BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(40, 8)),
-            BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(56, 8)),
+            ReadUInt16(data, 0, reader.BigEndian),
+            ReadInt16(data, 2, reader.BigEndian),
+            ReadUInt64(data, 16, reader.BigEndian),
+            ReadUInt64(data, 24, reader.BigEndian),
+            ReadInt64(data, 32, reader.BigEndian),
+            ReadInt64(data, 40, reader.BigEndian),
+            ReadInt64(data, 56, reader.BigEndian),
             direct,
             indirect);
     }
@@ -1711,7 +1726,7 @@ internal static class ManagedPs4UfsReader
         return blocks[blockIndex] * super.FragmentSize + (cursor - blockIndex * super.FragmentSize);
     }
 
-    private static IReadOnlyList<FileExtent> CollectExtents(EncryptedPs4PartitionReader reader, UfsSuperblock super, UfsInode inode)
+    private static IReadOnlyList<FileExtent> CollectExtents(IPlayStationPartitionReader reader, UfsSuperblock super, UfsInode inode)
     {
         var extents = new List<FileExtent>();
         var remaining = (long)Math.Min(inode.Size, long.MaxValue);
@@ -1736,7 +1751,7 @@ internal static class ManagedPs4UfsReader
         return extents;
     }
 
-    private static void CollectIndirect(EncryptedPs4PartitionReader reader, UfsSuperblock super, long tableBlock, int level, List<FileExtent> extents, ref long remaining)
+    private static void CollectIndirect(IPlayStationPartitionReader reader, UfsSuperblock super, long tableBlock, int level, List<FileExtent> extents, ref long remaining)
     {
         if (tableBlock <= 0 || level <= 0 || remaining <= 0)
         {
@@ -1753,7 +1768,7 @@ internal static class ManagedPs4UfsReader
         var count = Math.Min(super.IndirectCount, data.Length / 8);
         for (var index = 0; index < count && remaining > 0; index++)
         {
-            var block = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(index * 8, 8));
+            var block = ReadInt64(data, index * 8, reader.BigEndian);
             if (block <= 0)
             {
                 break;
@@ -1889,7 +1904,7 @@ internal static class ManagedPs4UfsReader
             _super = super;
         }
 
-        public static UfsAllocationMap? TryRead(EncryptedPs4PartitionReader reader, UfsSuperblock super)
+        public static UfsAllocationMap? TryRead(IPlayStationPartitionReader reader, UfsSuperblock super)
         {
             try
             {
@@ -1904,13 +1919,13 @@ internal static class ManagedPs4UfsReader
                     }
 
                     var data = reader.ReadBytes(cgOffset, cgBytes);
-                    if (BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(4, 4)) != CgMagic)
+                    if (ReadInt32(data, 4, reader.BigEndian) != CgMagic)
                     {
                         continue;
                     }
 
-                    var iusedOff = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(92, 4));
-                    var freeOff = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(96, 4));
+                    var iusedOff = ReadUInt32(data, 92, reader.BigEndian);
+                    var freeOff = ReadUInt32(data, 96, reader.BigEndian);
                     if (iusedOff > 0 && iusedOff < data.Length)
                     {
                         map._inodeUsed[cg] = data[(int)iusedOff..];
@@ -2012,8 +2027,29 @@ internal static class ManagedPs4UfsReader
         }
     }
 
-    private static int ReadInt32(byte[] data, int offset) => BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(offset, 4));
-    private static uint ReadUInt32(byte[] data, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset, 4));
+    private static short ReadInt16(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadInt16BigEndian(data.Slice(offset, 2))
+        : BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset, 2));
+
+    private static ushort ReadUInt16(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadUInt16BigEndian(data.Slice(offset, 2))
+        : BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset, 2));
+
+    private static int ReadInt32(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadInt32BigEndian(data.Slice(offset, 4))
+        : BinaryPrimitives.ReadInt32LittleEndian(data.Slice(offset, 4));
+
+    private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset, 4))
+        : BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
+
+    private static long ReadInt64(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadInt64BigEndian(data.Slice(offset, 8))
+        : BinaryPrimitives.ReadInt64LittleEndian(data.Slice(offset, 8));
+
+    private static ulong ReadUInt64(ReadOnlySpan<byte> data, int offset, bool bigEndian) => bigEndian
+        ? BinaryPrimitives.ReadUInt64BigEndian(data.Slice(offset, 8))
+        : BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset, 8));
 }
 
 internal sealed record ManagedPs4Partition(string Name, ManagedPs4FileSystem FileSystem, ulong FirstLba, ulong Offset, ulong Length, ulong IvOffsetSectors);

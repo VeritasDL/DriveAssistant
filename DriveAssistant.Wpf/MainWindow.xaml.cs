@@ -542,13 +542,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
 
-        if (imageKind == ConsoleDriveImageKind.PlayStationHdd)
+        if (IsPlayStationImageKind(imageKind))
         {
-            await OpenPlayStationImagePathAsync(imagePath, keyPath ?? string.Empty);
+            await OpenPlayStationImagePathAsync(imagePath, keyPath ?? string.Empty, imageKind);
             return;
         }
 
-        var chooser = new ConsoleImageOpenWindow(imagePath, ConsoleDriveImageKind.PlayStationHdd)
+        var chooser = new ConsoleImageOpenWindow(imagePath, ConsoleDriveImageKind.PlayStation4Hdd)
         {
             Owner = this
         };
@@ -748,7 +748,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         showError: false);
     }
 
-    private async Task<bool> OpenPlayStationImagePathAsync(string imagePath, string keyPath)
+    private async Task<bool> OpenPlayStationImagePathAsync(string imagePath, string keyPath, ConsoleDriveImageKind imageKind)
     {
         if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
         {
@@ -756,9 +756,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        return await RunUiTaskAsync("Opening PlayStation HDD image...", () =>
+        var platformName = imageKind == ConsoleDriveImageKind.PlayStation3Hdd
+            ? "PlayStation 3"
+            : "PlayStation 4 / PlayStation 4 Pro";
+
+        return await RunUiTaskAsync($"Opening {platformName} HDD image...", () =>
         {
-            var image = PlayStationStorageImage.Open(imagePath, keyPath);
+            PlayStationStorageImage image;
+            if (imageKind == ConsoleDriveImageKind.PlayStation3Hdd)
+            {
+                if (!ManagedPs3StorageImage.TryOpen(imagePath, keyPath, out image, out var ps3Error))
+                {
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(ps3Error)
+                            ? "The PlayStation 3 HDD image could not be opened by the managed PS3 reader."
+                            : $"The PlayStation 3 HDD image could not be opened by the managed PS3 reader: {ps3Error}");
+                }
+            }
+            else
+            {
+                image = PlayStationStorageImage.Open(imagePath, keyPath);
+            }
+
             var partitions = image.Volumes
                 .Select(volume =>
                 {
@@ -801,10 +820,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _recoveryIntegrity = null;
             SelectedPartition = Partitions.FirstOrDefault(p => p.IsMounted) ?? Partitions.FirstOrDefault();
             AddRecentImage(result.fileName);
-            AppendLog($"Opened PlayStation HDD image: {result.fileName}");
-            AppendLog($"Detected PlayStation partitions: {Partitions.Count}");
+            AppendLog($"Opened {platformName} HDD image: {result.fileName}");
+            AppendLog($"Detected {platformName} partitions: {Partitions.Count}");
         },
         showError: true);
+    }
+
+    private static bool IsPlayStationImageKind(ConsoleDriveImageKind imageKind)
+    {
+        return imageKind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd;
     }
 
     private static bool IsSupportedImagePath(string path)

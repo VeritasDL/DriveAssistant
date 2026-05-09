@@ -17,7 +17,8 @@ public partial class ConsoleImageOpenWindow : Window
         new("Xbox / Xbox 360 FATX", ConsoleDriveImageKind.XboxFatx, false),
         new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false),
         new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
-        new("PlayStation 3 / PlayStation 4 HDD", ConsoleDriveImageKind.PlayStationHdd, false)
+        new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, false),
+        new("PlayStation 4 / PlayStation 4 Pro HDD", ConsoleDriveImageKind.PlayStation4Hdd, false)
     ];
 
     public ConsoleImageOpenWindow(string? imagePath = null, ConsoleDriveImageKind initialKind = ConsoleDriveImageKind.Auto)
@@ -163,18 +164,20 @@ public partial class ConsoleImageOpenWindow : Window
 
         if (RequiresKey(ImageKind))
         {
-            StatusTextBlock.Text = "PlayStation keys are optional. Leave blank for already-decrypted PS3/PS4 images, or select the matching PS3 EID root key / PS4 EAP HDD key for encrypted images.";
+            StatusTextBlock.Text = ImageKind == ConsoleDriveImageKind.PlayStation3Hdd
+                ? "PlayStation 3 is separated for detection. Full managed PS3 HDD mounting is not implemented after the native bridge removal; leave the key blank for already-decrypted images or use custom partitions where applicable."
+                : "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images.";
             return;
         }
 
         StatusTextBlock.Text = ImageKind == ConsoleDriveImageKind.Auto
-            ? "Auto detect tries FATX, Xbox GPT/NTFS, generic NTFS/FAT32/exFAT, then asks for PlayStation keys if needed."
+            ? "Auto detect tries FATX, Xbox GPT/NTFS, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed."
             : "This image type does not require a key file.";
     }
 
     private static bool RequiresKey(ConsoleDriveImageKind kind)
     {
-        return kind == ConsoleDriveImageKind.PlayStationHdd;
+        return kind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd;
     }
 }
 
@@ -184,7 +187,8 @@ public enum ConsoleDriveImageKind
     XboxFatx,
     XboxGptNtfs,
     GenericFileSystem,
-    PlayStationHdd
+    PlayStation3Hdd,
+    PlayStation4Hdd
 }
 
 public sealed record ConsoleImageKindOption(string Name, ConsoleDriveImageKind Kind, bool RequiresKey)
