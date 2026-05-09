@@ -117,6 +117,7 @@ dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x6
 ## Nintendo Switch Key Notes
 
 - Switch NAND/eMMC images can be opened without keys for GPT partition discovery, but encrypted BIS partitions need a text key file to mount.
+- Public placeholder examples are available in [`docs/example-key-files`](docs/example-key-files). Replace every placeholder with keys dumped from the same console that produced the NAND/eMMC image.
 - Accepted formats are biskeydump-style lines such as `BIS KEY 1 (crypt): 0123...` / `BIS KEY 1 (tweak): 4567...`, or prod.keys-style names such as `bis_key_01_crypt = 0123...`.
 - Each crypt/tweak value must be exactly 32 hexadecimal characters.
 - A complete biskeydump-style file can be as small as:
