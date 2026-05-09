@@ -2,8 +2,6 @@
 
 Drive Assistant is a Windows recovery and inspection toolkit for console drive images. It focuses on practical read-only browsing, metadata recovery, file carving, and safe export workflows for Xbox, PlayStation, and common filesystem images.
 
-The codebase started as FATXTools, but the active application and published project name is now **Drive Assistant**.
-
 ## Features
 
 - Open raw `.img` images and HDD Raw Copy `.imgc` compressed images.
@@ -97,8 +95,6 @@ Self-contained Windows x64 publish:
 dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o .\publish\DriveAssistant-win-x64
 ```
 
-Release packages are built by `.github/workflows/release.yaml` for tags like `v0.3.55`. The workflow runs tests, publishes a self-contained Windows x64 ZIP, emits a SHA256 checksum, and creates or updates the GitHub release. If `WINDOWS_CODESIGN_PFX_BASE64` and `WINDOWS_CODESIGN_PFX_PASSWORD` repository secrets are configured, the workflow signs the Windows binaries before packaging.
-
 ## File Carving Notes
 
 - Prefer scanning the specific partition you care about rather than the whole disk.
@@ -120,30 +116,13 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
 - Continue PS4 deleted-file validation with images that contain known nonzero deleted UFS file data. The current managed PS4 reader loads the tested devkit raw image, exports active files, decrypts partitions, and finds name-only deleted dirent candidates, but that image does not prove full deleted-file data recovery.
-- Research PS5 support separately from PS4 by adding `ssd0.*` partition discovery, validating tEXFAT/exFAT and UFS partition readers, and identifying what PS5 `bfs` user storage requires before claiming PS5 image support.
-- PlayStation HDD handling is managed in the WPF project. The old native PS-HDD bridge and mount-tool fallback have been removed; PS3 Cell disklabel/key derivation/decryption, PS4 Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support are handled in C#.
+- Research PS5 support by adding `ssd0.*` partition discovery, validating tEXFAT/exFAT and UFS partition readers, and identifying what PS5 `bfs` user storage requires.
 - Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
 - Broaden automated tests around managed PS4 deleted-inode export paths using fixtures with known recoverable deleted content.
-- Configure repository code-signing secrets if signed release binaries are required: `WINDOWS_CODESIGN_PFX_BASE64`, `WINDOWS_CODESIGN_PFX_PASSWORD`, and optionally `WINDOWS_CODESIGN_TIMESTAMP_URL`.
-
-## Contributors
-
-Contributors from the repository's git history:
-
-- aerosoul / aerosoul94
-- rain0x06
-- Mike Davis
-- ChainSwordCS
-- FreeTheTech101 / Alexander Georgiadis
-- RezTech
-- gaasedelen
-- dependabot[bot]
-
-The bundled PlayStation helper lineage comes from [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools), which credits flat_z, glevand, naehrwert, and 3141card, with contributions from Tdijital and jason098.
 
 ## Sources / References
 
-- Existing FATXTools / Drive Assistant repository history, source code, tests, and local synthetic fixtures.
+- [FATXTools](https://github.com/aerosoul94/FATXTools/) for the initial codebase.
 - [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) for PlayStation helper tooling lineage and storage-behavior reference material.
 - [DiscUtils.Ntfs 0.16.13](https://www.nuget.org/packages/DiscUtils.Ntfs) for NTFS parsing used by the Xbox GPT/NTFS reader.
 - [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
