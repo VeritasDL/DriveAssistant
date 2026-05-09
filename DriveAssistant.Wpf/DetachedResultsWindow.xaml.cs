@@ -9,6 +9,7 @@ public partial class DetachedResultsWindow : Window
     public DetachedResultsWindow()
     {
         InitializeComponent();
+        ApplyWindowStatePadding();
     }
 
     public event EventHandler? DockRequested;
@@ -49,10 +50,22 @@ public partial class DetachedResultsWindow : Window
         ToggleWindowMaximized();
     }
 
+    private void Window_StateChanged(object? sender, EventArgs e)
+    {
+        ApplyWindowStatePadding();
+    }
+
     private void ToggleWindowMaximized()
     {
         WindowState = WindowState == WindowState.Maximized
             ? WindowState.Normal
             : WindowState.Maximized;
+    }
+
+    private void ApplyWindowStatePadding()
+    {
+        RootShell.Margin = WindowState == WindowState.Maximized
+            ? new Thickness(6)
+            : new Thickness(0);
     }
 }

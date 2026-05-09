@@ -11,17 +11,18 @@
         ResizeMode="CanResize"
         WindowStyle="None"
         Background="{DynamicResource AppBgBrush}"
-        Foreground="{DynamicResource TextBrush}">
+        Foreground="{DynamicResource TextBrush}"
+        StateChanged="Window_StateChanged">
     <shell:WindowChrome.WindowChrome>
-        <shell:WindowChrome CaptionHeight="30"
+        <shell:WindowChrome CaptionHeight="34"
                             ResizeBorderThickness="6"
                             GlassFrameThickness="0"
                             CornerRadius="0"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
-    <Grid>
+    <Grid x:Name="RootShell">
         <Grid.RowDefinitions>
-            <RowDefinition Height="30" />
+            <RowDefinition Height="34" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -60,7 +61,7 @@
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
                         MinWidth="46"
-                        MinHeight="30"
+                        MinHeight="34"
                         Padding="0"
                         BorderThickness="0"
                         ToolTip="Minimize"
@@ -72,7 +73,7 @@
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
                         MinWidth="46"
-                        MinHeight="30"
+                        MinHeight="34"
                         Padding="0"
                         BorderThickness="0"
                         ToolTip="Maximize"
@@ -84,7 +85,7 @@
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
                         MinWidth="46"
-                        MinHeight="30"
+                        MinHeight="34"
                         Padding="0"
                         BorderThickness="0"
                         ToolTip="Dock and close"
