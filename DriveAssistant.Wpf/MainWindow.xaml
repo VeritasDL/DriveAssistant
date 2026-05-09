@@ -163,10 +163,10 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource PrimaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Click="OpenImage_Click">
                         <Button.ToolTip>
-                            <ToolTip>
+                            <ToolTip MaxWidth="380">
                                 <StackPanel>
                                     <TextBlock Text="Open Image" FontWeight="SemiBold" />
-                                    <TextBlock Text="Open a console drive image or compressed HDD image." Foreground="{DynamicResource MutedBrush}" />
+                                    <TextBlock Text="Open a console drive image or compressed HDD image." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" />
                                 </StackPanel>
                             </ToolTip>
                         </Button.ToolTip>
@@ -174,10 +174,10 @@
                     </Button>
                     <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTipService.ShowOnDisabled="True" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}">
                         <Button.ToolTip>
-                            <ToolTip>
+                            <ToolTip MaxWidth="380">
                                 <StackPanel>
                                     <TextBlock Text="Metadata Scan" FontWeight="SemiBold" />
-                                    <TextBlock Text="Scan the selected partition for deleted or recoverable filesystem metadata." Foreground="{DynamicResource MutedBrush}" />
+                                    <TextBlock Text="Scan the selected partition for deleted or recoverable filesystem metadata." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" />
                                 </StackPanel>
                             </ToolTip>
                         </Button.ToolTip>
@@ -185,10 +185,10 @@
                     </Button>
                     <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTipService.ShowOnDisabled="True" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}">
                         <Button.ToolTip>
-                            <ToolTip>
+                            <ToolTip MaxWidth="380">
                                 <StackPanel>
                                     <TextBlock Text="File Carver" FontWeight="SemiBold" />
-                                    <TextBlock Text="Scan the selected partition for recoverable file signatures." Foreground="{DynamicResource MutedBrush}" />
+                                    <TextBlock Text="Scan the selected partition for recoverable file signatures." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" />
                                 </StackPanel>
                             </ToolTip>
                         </Button.ToolTip>

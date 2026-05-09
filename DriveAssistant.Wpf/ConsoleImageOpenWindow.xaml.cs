@@ -60,7 +60,8 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Key files (*.bin;*.key;*.dat;eid_root_key)|*.bin;*.key;*.dat;eid_root_key|All files (*.*)|*.*",
+            Filter = "All files (*.*)|*.*|Key files (*.bin;*.key;*.dat;eid_root_key)|*.bin;*.key;*.dat;eid_root_key",
+            FilterIndex = 1,
             CheckFileExists = true
         };
 
