@@ -571,9 +571,12 @@ bis_key_02_tweak = 88887777666655554444333322221111
         Assert.Contains(image.Partitions, partition => partition.Name.Equals("SAFE", StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(keyPath))
         {
-            var safe = image.Partitions.Single(partition => partition.Name.Equals("SAFE", StringComparison.OrdinalIgnoreCase));
-            Assert.IsType<SwitchFat32Volume>(safe.GenericVolume);
-            Assert.Contains("Mounted", safe.Status);
+            foreach (var name in new[] { "SAFE", "SYSTEM", "USER" })
+            {
+                var partition = image.Partitions.Single(partition => partition.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                Assert.IsType<SwitchFat32Volume>(partition.GenericVolume);
+                Assert.Contains("Mounted", partition.Status);
+            }
         }
     }
 
