@@ -820,7 +820,12 @@
                         BorderBrush="{DynamicResource LineSoftBrush}"
                         BorderThickness="1"
                         CornerRadius="6">
-                    <TabControl x:Name="ResultsTabs" Margin="12,8,12,12" SelectedIndex="2">
+                    <Grid Margin="12,8,12,12">
+                        <TabControl x:Name="ResultsTabs"
+                                    SelectedIndex="2"
+                                    PreviewMouseLeftButtonDown="ResultsTabs_PreviewMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="ResultsTabs_PreviewMouseLeftButtonUp"
+                                    PreviewMouseMove="ResultsTabs_PreviewMouseMove">
                         <TabItem x:Name="RecoveryTab" Header="Recovery View">
                             <Border Background="{DynamicResource DataGridRowBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="0,6,6,6">
                                 <Grid>
@@ -1046,7 +1051,25 @@
                                 </Grid>
                             </Border>
                         </TabItem>
-                    </TabControl>
+                        </TabControl>
+                        <Button x:Name="ResultsPanelDetachButton"
+                                Style="{StaticResource SecondaryButton}"
+                                Panel.ZIndex="2"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Height="28"
+                                MinHeight="28"
+                                MinWidth="96"
+                                Padding="10,0"
+                                Margin="0,1,4,0"
+                                ToolTip="Move Recovery View and Carved Files into a resizable window"
+                                Click="ToggleResultsWindow_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
+                                <TextBlock x:Name="ResultsPanelDetachText" Text="Pop Out" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
                 </Border>
             </Grid>
 

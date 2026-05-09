@@ -80,6 +80,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _suppressRecentImageSelection;
     private DetachedResultsWindow? _detachedResultsWindow;
     private bool _closingMainWindow;
+    private Point? _resultsTabDragStart;
+    private TabItem? _resultsTabDragItem;
 
     public MainWindow()
     {
@@ -1885,7 +1887,55 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void DetachResultsTabs()
+    private void ResultsTabs_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _resultsTabDragStart = null;
+        _resultsTabDragItem = null;
+
+        if (_detachedResultsWindow != null ||
+            e.GetPosition(ResultsTabs).Y > 36 ||
+            FindVisualParent<TabItem>(e.OriginalSource as DependencyObject) is not { } tab ||
+            (tab != RecoveryTab && tab != CarverTab))
+        {
+            return;
+        }
+
+        _resultsTabDragStart = e.GetPosition(this);
+        _resultsTabDragItem = tab;
+    }
+
+    private void ResultsTabs_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _resultsTabDragStart = null;
+        _resultsTabDragItem = null;
+    }
+
+    private void ResultsTabs_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_detachedResultsWindow != null ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            _resultsTabDragStart is not { } start ||
+            _resultsTabDragItem == null)
+        {
+            return;
+        }
+
+        var current = e.GetPosition(this);
+        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        var draggedTab = _resultsTabDragItem;
+        _resultsTabDragStart = null;
+        _resultsTabDragItem = null;
+        ResultsTabs.SelectedItem = draggedTab;
+        DetachResultsTabs(draggedTab, PointToScreen(current));
+        e.Handled = true;
+    }
+
+    private void DetachResultsTabs(TabItem? selectedTab = null, Point? screenLocation = null)
     {
         if (_detachedResultsWindow != null)
         {
@@ -1905,11 +1955,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ResultsTabs.Items.Remove(CarverTab);
         _detachedResultsWindow.DetachedTabs.Items.Add(RecoveryTab);
         _detachedResultsWindow.DetachedTabs.Items.Add(CarverTab);
-        _detachedResultsWindow.DetachedTabs.SelectedItem = RecoveryTab;
+        _detachedResultsWindow.DetachedTabs.SelectedItem = selectedTab == CarverTab ? CarverTab : RecoveryTab;
         ResultsTabs.SelectedItem = LogTab;
         ToggleResultsWindowText.Text = "Dock Results";
         ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files back into the main window";
+        ResultsPanelDetachText.Text = "Dock";
+        ResultsPanelDetachButton.ToolTip = "Move Recovery View and Carved Files back into the main window";
         _detachedResultsWindow.Show();
+        if (screenLocation is { } location)
+        {
+            _detachedResultsWindow.Left = Math.Max(0, location.X - 64);
+            _detachedResultsWindow.Top = Math.Max(0, location.Y - 18);
+        }
     }
 
     private void DetachedResultsWindow_DockRequested(object? sender, EventArgs e)
@@ -1952,6 +2009,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ResultsTabs.SelectedItem = RecoveryTab;
         ToggleResultsWindowText.Text = "Pop Out Results";
         ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files into a resizable window";
+        ResultsPanelDetachText.Text = "Pop Out";
+        ResultsPanelDetachButton.ToolTip = "Move Recovery View and Carved Files into a resizable window";
         _detachedResultsWindow = null;
         window.Close();
     }
