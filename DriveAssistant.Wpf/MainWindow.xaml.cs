@@ -2365,12 +2365,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         MessageBox.Show(
             this,
-            "Created by aerosoul94, forked by rain0x\n" +
-            "Original source code: https://github.com/aerosoul94/FATXTools\n" +
-            "Please report any bugs\n" +
+            "Drive Assistant is a read-only disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images.\n\n" +
+            "Current focus: practical browsing, metadata recovery, file carving, and safe export workflows for general filesystems plus Xbox, PlayStation, and Nintendo storage.\n\n" +
+            "Long-term goal: support most Nintendo console drives, all PlayStation and Xbox console HDDs/SSDs where technically practical, and common PC disk images.\n\n" +
+            "Project: https://github.com/rain0x06/DriveAssistant\n" +
+            "Original FATXTools codebase: https://github.com/aerosoul94/FATXTools\n\n" +
             $"Version: {BuildInfo.Version}\n" +
             $"Commit: {BuildInfo.CommitHash}\n" +
-            $"Build Date: {BuildInfo.BuildDate:yyyy-MM-dd HH:mm:ss}\n",
+            $"Build date: {BuildInfo.BuildDate:yyyy-MM-dd HH:mm:ss}\n",
             $"About {AppName}",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
