@@ -180,7 +180,7 @@ public partial class SettingsWindow : Window
                 definition.Id,
                 definition.Category,
                 definition.Name,
-                shortcuts.TryGetValue(definition.Id, out var gesture) ? gesture : definition.DefaultGesture));
+                ShortcutCatalog.GetGestureText(shortcuts, definition.Id)));
         }
     }
 

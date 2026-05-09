@@ -40,7 +40,7 @@ internal static class ShortcutCatalog
         new(ToggleInspector, "View", "Show or hide inspector", "Ctrl+2"),
         new(ToggleClusterViewer, "View", "Toggle cluster viewer", "Ctrl+3"),
         new(ToggleResultsWindow, "View", "Pop out or dock results", "Ctrl+4"),
-        new(Settings, "Tools", "Settings", "Ctrl+OemComma"),
+        new(Settings, "Tools", "Settings", "Ctrl+,"),
         new(About, "Help", "About", "F1")
     ];
 
@@ -73,7 +73,7 @@ internal static class ShortcutCatalog
     public static string GetGestureText(IDictionary<string, string>? shortcuts, string id)
     {
         var map = Normalize(shortcuts);
-        return map.TryGetValue(id, out var gesture) ? gesture : string.Empty;
+        return map.TryGetValue(id, out var gesture) ? HumanizeGestureText(gesture) : string.Empty;
     }
 
     public static bool TryParseGesture(string? text, out KeyGesture? gesture)
@@ -86,7 +86,7 @@ internal static class ShortcutCatalog
 
         try
         {
-            if (GestureConverter.ConvertFromInvariantString(text.Trim()) is KeyGesture parsed)
+            if (GestureConverter.ConvertFromInvariantString(DehumanizeGestureText(text.Trim())) is KeyGesture parsed)
             {
                 gesture = parsed;
                 return true;
@@ -101,6 +101,39 @@ internal static class ShortcutCatalog
 
     public static string FormatGesture(KeyGesture gesture)
     {
-        return GestureConverter.ConvertToInvariantString(gesture) ?? gesture.GetDisplayStringForCulture(System.Globalization.CultureInfo.CurrentCulture);
+        var invariant = GestureConverter.ConvertToInvariantString(gesture) ?? gesture.GetDisplayStringForCulture(System.Globalization.CultureInfo.CurrentCulture);
+        return HumanizeGestureText(invariant);
+    }
+
+    private static string DehumanizeGestureText(string text)
+    {
+        return text
+            .Replace("+,", "+OemComma", StringComparison.OrdinalIgnoreCase)
+            .Replace("+.", "+OemPeriod", StringComparison.OrdinalIgnoreCase)
+            .Replace("+-", "+OemMinus", StringComparison.OrdinalIgnoreCase)
+            .Replace("++", "+OemPlus", StringComparison.OrdinalIgnoreCase)
+            .Replace("+/", "+OemQuestion", StringComparison.OrdinalIgnoreCase)
+            .Replace("+;", "+OemSemicolon", StringComparison.OrdinalIgnoreCase)
+            .Replace("+`", "+OemTilde", StringComparison.OrdinalIgnoreCase)
+            .Replace("+[", "+OemOpenBrackets", StringComparison.OrdinalIgnoreCase)
+            .Replace("+]", "+OemCloseBrackets", StringComparison.OrdinalIgnoreCase)
+            .Replace("+\\", "+OemPipe", StringComparison.OrdinalIgnoreCase)
+            .Replace("+\"", "+OemQuotes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string HumanizeGestureText(string text)
+    {
+        return text
+            .Replace("+OemComma", "+,", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemPeriod", "+.", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemMinus", "+-", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemPlus", "++", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemQuestion", "+/", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemSemicolon", "+;", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemTilde", "+`", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemOpenBrackets", "+[", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemCloseBrackets", "+]", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemPipe", "+\\", StringComparison.OrdinalIgnoreCase)
+            .Replace("+OemQuotes", "+\"", StringComparison.OrdinalIgnoreCase);
     }
 }
