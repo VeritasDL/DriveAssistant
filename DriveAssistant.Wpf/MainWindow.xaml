@@ -161,14 +161,38 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource PrimaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" ToolTip="Open image" Click="OpenImage_Click">
+                    <Button Style="{StaticResource PrimaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Click="OpenImage_Click">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Open Image" FontWeight="SemiBold" />
+                                    <TextBlock Text="Open a console drive image or compressed HDD image." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <TextBlock Style="{StaticResource IconText}" Text="&#xE8E5;" Margin="0" />
                     </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTip="Metadata scan" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}">
+                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTipService.ShowOnDisabled="True" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Metadata Scan" FontWeight="SemiBold" />
+                                    <TextBlock Text="Scan the selected partition for deleted or recoverable filesystem metadata." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <TextBlock Style="{StaticResource IconText}" Text="&#xE9D2;" Margin="0" />
                     </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTip="File carver" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}">
-                        <TextBlock Style="{StaticResource IconText}" Text="&#xE9F5;" Margin="0" />
+                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTipService.ShowOnDisabled="True" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="File Carver" FontWeight="SemiBold" />
+                                    <TextBlock Text="Scan the selected partition for recoverable file signatures." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE721;" Margin="0" />
                     </Button>
                     <Separator Width="1" Margin="10,4" Background="{DynamicResource LineSoftBrush}" />
                     <ComboBox x:Name="RecentImagesCombo"
@@ -192,9 +216,16 @@
                             MinHeight="30"
                             Padding="0"
                             Margin="8,0,0,0"
-                            ToolTip="Restore partitions"
                             Visibility="Collapsed"
                             Click="RestorePartitions_Click">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Restore Partitions" FontWeight="SemiBold" />
+                                    <TextBlock Text="Show the partitions panel again." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" Margin="0" />
                     </Button>
                     <Button x:Name="ShowInspectorButton"
@@ -205,9 +236,16 @@
                             MinHeight="30"
                             Padding="0"
                             Margin="8,0,0,0"
-                            ToolTip="Restore inspector"
                             Visibility="Collapsed"
                             Click="RestoreInspector_Click">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Restore Inspector" FontWeight="SemiBold" />
+                                    <TextBlock Text="Show the inspector panel again." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <TextBlock Style="{StaticResource IconText}" Text="&#xE946;" Margin="0" />
                     </Button>
                     <Button x:Name="ClusterViewerToggleButton"
@@ -217,9 +255,16 @@
                             MinHeight="30"
                             Padding="10,0"
                             Margin="8,0,0,0"
-                            ToolTip="Show cluster viewer"
                             Visibility="Collapsed"
                             Click="ToggleClusterViewer_Click">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Cluster Viewer" FontWeight="SemiBold" />
+                                    <TextBlock Text="Switch between the filesystem browser and cluster map view." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE9D2;" />
                             <TextBlock x:Name="ClusterViewerToggleText" Text="Cluster Viewer" />
@@ -232,9 +277,16 @@
                             MinHeight="30"
                             Padding="10,0"
                             Margin="6,0,0,0"
-                            ToolTip="Move Recovery View and Carved Files into a resizable window"
                             Visibility="Collapsed"
                             Click="ToggleResultsWindow_Click">
+                        <Button.ToolTip>
+                            <ToolTip>
+                                <StackPanel>
+                                    <TextBlock Text="Pop Out Results" FontWeight="SemiBold" />
+                                    <TextBlock Text="Move Recovery View and Carved Files into a resizable window." Foreground="{DynamicResource MutedBrush}" />
+                                </StackPanel>
+                            </ToolTip>
+                        </Button.ToolTip>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
                             <TextBlock x:Name="ToggleResultsWindowText" Text="Pop Out Results" />
