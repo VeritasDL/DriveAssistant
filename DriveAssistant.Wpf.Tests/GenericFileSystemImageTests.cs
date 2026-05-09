@@ -511,6 +511,56 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void GenericCarver_DetectsNintendoSwitchFormats()
+    {
+        var image = new byte[0x9000];
+        Encoding.ASCII.GetBytes("PFS0").CopyTo(image.AsSpan(0));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(4), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(8), 8);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x10), 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x18), 0x20);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x20), 0);
+        Encoding.ASCII.GetBytes("a.nca\0").CopyTo(image.AsSpan(0x28));
+
+        Encoding.ASCII.GetBytes("NCA3").CopyTo(image.AsSpan(0x2200));
+        Encoding.ASCII.GetBytes("HEAD").CopyTo(image.AsSpan(0x5100));
+        Encoding.ASCII.GetBytes("NRO0").CopyTo(image.AsSpan(0x7000));
+        Encoding.ASCII.GetBytes("NSO0").CopyTo(image.AsSpan(0x8000));
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "switch image", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Contains(rows, row => row.Kind == "NSP" && row.Size == 0x50);
+        Assert.Contains(rows, row => row.Kind == "NCA");
+        Assert.Contains(rows, row => row.Kind == "XCI");
+        Assert.Contains(rows, row => row.Kind == "NRO");
+        Assert.Contains(rows, row => row.Kind == "NSO");
+    }
+
+    [Fact]
+    public void SwitchStorageImage_RealNandSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_SWITCH_E2E_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_SWITCH_E2E_KEYS");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var image = SwitchStorageImage.Open(imagePath, keyPath);
+
+        Assert.NotEmpty(image.Partitions);
+        Assert.Contains(image.Partitions, partition => partition.Name.Equals("SAFE", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(keyPath))
+        {
+            var safe = image.Partitions.Single(partition => partition.Name.Equals("SAFE", StringComparison.OrdinalIgnoreCase));
+            Assert.IsType<SwitchFat32Volume>(safe.GenericVolume);
+            Assert.Contains("Mounted", safe.Status);
+        }
+    }
+
+    [Fact]
     public void GenericCarver_AddsPredictedPs4PkgFragmentWindows()
     {
         var addFragments = typeof(GenericFileCarver).GetMethod("AddPs4PkgFragmentRows", BindingFlags.NonPublic | BindingFlags.Static)!;

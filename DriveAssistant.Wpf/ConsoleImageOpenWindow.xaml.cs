@@ -16,6 +16,7 @@ public partial class ConsoleImageOpenWindow : Window
         new("Auto detect", ConsoleDriveImageKind.Auto, false),
         new("Xbox / Xbox 360 FATX", ConsoleDriveImageKind.XboxFatx, false),
         new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false),
+        new("Nintendo Switch NAND / eMMC", ConsoleDriveImageKind.NintendoSwitchNand, false),
         new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
         new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, false),
         new("PlayStation 4 / PlayStation 4 Pro HDD", ConsoleDriveImageKind.PlayStation4Hdd, false)
@@ -46,7 +47,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.zip)|*.img;*.bin;*.raw;*.imgc;*.zip|All files (*.*)|*.*",
+            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.zip)|*.img;*.bin;*.raw;*.imgc;*.zip|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
             CheckFileExists = true
         };
 
@@ -60,7 +61,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "All files (*.*)|*.*|Key files (*.bin;*.key;*.dat;eid_root_key)|*.bin;*.key;*.dat;eid_root_key",
+            Filter = "All files (*.*)|*.*|Key files (*.bin;*.key;*.dat;*.txt;prod.keys;keys.txt;eid_root_key)|*.bin;*.key;*.dat;*.txt;prod.keys;keys.txt;eid_root_key",
             FilterIndex = 1,
             CheckFileExists = true
         };
@@ -165,20 +166,26 @@ public partial class ConsoleImageOpenWindow : Window
 
         if (RequiresKey(ImageKind))
         {
-            StatusTextBlock.Text = ImageKind == ConsoleDriveImageKind.PlayStation3Hdd
-                ? "PlayStation 3 is separated for detection. Full managed PS3 HDD mounting is not implemented after the native bridge removal; leave the key blank for already-decrypted images or use custom partitions where applicable."
-                : "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images.";
+            StatusTextBlock.Text = ImageKind switch
+            {
+                ConsoleDriveImageKind.PlayStation3Hdd => "PlayStation 3 uses the managed PS3 reader. Select an EID root key for encrypted HDDs, or leave blank for already-decrypted images.",
+                ConsoleDriveImageKind.NintendoSwitchNand => "Select a biskeydump/prod.keys-style text file to decrypt Switch BIS FAT partitions. Plain GPT parsing works without keys.",
+                _ => "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images."
+            };
             return;
         }
 
-        StatusTextBlock.Text = ImageKind == ConsoleDriveImageKind.Auto
-            ? "Auto detect tries FATX, Xbox GPT/NTFS, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed."
-            : "This image type does not require a key file.";
+        StatusTextBlock.Text = ImageKind switch
+        {
+            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
+            ConsoleDriveImageKind.NintendoSwitchNand => "Switch NAND support reads the GPT and mounts readable FAT32 BIS partitions when BIS keys are supplied.",
+            _ => "This image type does not require a key file."
+        };
     }
 
     private static bool RequiresKey(ConsoleDriveImageKind kind)
     {
-        return kind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd;
+        return kind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd or ConsoleDriveImageKind.NintendoSwitchNand;
     }
 }
 
@@ -187,6 +194,7 @@ public enum ConsoleDriveImageKind
     Auto,
     XboxFatx,
     XboxGptNtfs,
+    NintendoSwitchNand,
     GenericFileSystem,
     PlayStation3Hdd,
     PlayStation4Hdd

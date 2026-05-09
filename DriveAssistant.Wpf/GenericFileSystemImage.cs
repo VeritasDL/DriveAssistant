@@ -322,7 +322,7 @@ public abstract class GenericFileSystemVolume
         CopyFile(entry, destinationPath, null, CancellationToken.None);
     }
 
-    public void CopyFile(GenericFileSystemEntry entry, string destinationPath, Action<long>? progress, CancellationToken cancellationToken)
+    public virtual void CopyFile(GenericFileSystemEntry entry, string destinationPath, Action<long>? progress, CancellationToken cancellationToken)
     {
         if (entry.IsDirectory)
         {

@@ -7,6 +7,7 @@ Drive Assistant is a Windows recovery and inspection toolkit for console drive i
 - Open raw `.img` images and HDD Raw Copy `.imgc` compressed images.
 - Browse mounted Xbox 360 FATX, original Xbox FATX, Xbox One/Series GPT/NTFS, XBFS, FAT32, exFAT, NTFS, and supported PlayStation partitions.
 - Open managed PS3 Cell HDD images and PS4/PS4 Pro/devkit Orbis HDD images. PS3 supports plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, dev_hdd0 UFS2, dev_hdd1 FAT, and VFLASH FAT partitions; PS4/Pro supports partition-relative XTS sectors and GPT-entry IV offsets.
+- Open Nintendo Switch raw NAND/eMMC images, parse the GPT/BIS partition layout, and mount decryptable FAT32 BIS partitions such as SAFE when a biskeydump/prod.keys-style key file is supplied.
 - Export files and folders without blocking the UI, with progress, cancellation, and disk-space preflight checks before large saves.
 - Scan filesystem metadata and show recovered/deleted entries in the main file table, with cancellation for long-running metadata scans.
 - Carve known file types from raw partitions with configurable scan intervals, fast/balanced/exhaustive scan profiles, cancellation, and custom signatures.
@@ -111,6 +112,7 @@ dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x6
 - Nested XVD/XVC probing detects readable inner filesystem headers. It does not decrypt encrypted XVD content.
 - Xbox 360 XEX carving recognizes known executable magic variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 - PS4 package carving recognizes `CNT` package headers as `PKG`, and classifies observed type-`1` debug packages as `DPKG`.
+- Nintendo Switch carving recognizes plaintext/decrypted `NCA2`/`NCA3` content archive headers, `NSP`/`PFS0` packages, `XCI` game-card images, `NRO`, `NSO`, and generic `ELF` executables. Raw encrypted NCA headers remain encrypted by design; run carving against a decrypted/mounted BIS partition when possible.
 
 ## Roadmap / TODO
 

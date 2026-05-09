@@ -281,9 +281,11 @@
                             Click="ToggleResultsWindow_Click">
                         <Button.ToolTip>
                             <ToolTip>
-                                <StackPanel>
+                                <StackPanel MaxWidth="260">
                                     <TextBlock Text="Pop Out Results" FontWeight="SemiBold" />
-                                    <TextBlock Text="Move Recovery View and Carved Files into a resizable window." Foreground="{DynamicResource MutedBrush}" />
+                                    <TextBlock Text="Move Recovery View and Carved Files into a resizable window."
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap" />
                                 </StackPanel>
                             </ToolTip>
                         </Button.ToolTip>
@@ -399,7 +401,15 @@
                                  Grid.Row="1"
                                  ItemsSource="{Binding Partitions}"
                                  SelectedItem="{Binding SelectedPartition}"
+                                 PreviewMouseRightButtonDown="PartitionList_PreviewMouseRightButtonDown"
+                                 ContextMenuOpening="PartitionList_ContextMenuOpening"
                                  SelectionChanged="PartitionList_SelectionChanged">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Metadata Scan" Click="PartitionMetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}" />
+                                    <MenuItem Header="File Carver" Click="PartitionFileCarver_Click" IsEnabled="{Binding CanRunFileCarver}" />
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Border Padding="10"
@@ -1118,8 +1128,17 @@
                                 MinWidth="96"
                                 Padding="10,0"
                                 Margin="0,1,4,0"
-                                ToolTip="Move Recovery View and Carved Files into a resizable window"
                                 Click="ToggleResultsWindow_Click">
+                            <Button.ToolTip>
+                                <ToolTip Placement="Left" MaxWidth="280">
+                                    <StackPanel MaxWidth="260">
+                                        <TextBlock Text="Pop Out Results" FontWeight="SemiBold" />
+                                        <TextBlock Text="Move Recovery View and Carved Files into a resizable window."
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </ToolTip>
+                            </Button.ToolTip>
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
                                 <TextBlock x:Name="ResultsPanelDetachText" Text="Pop Out" />

@@ -306,6 +306,7 @@ public sealed class GenericFileCarver
     {
         return TryMatchPlayStation(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchXbox(header, stream, absoluteOffset, remainingLength)
+               ?? TryMatchNintendoSwitch(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchCommon(header, stream, absoluteOffset, remainingLength);
     }
 
@@ -637,6 +638,41 @@ public sealed class GenericFileCarver
         {
             var size = TryGetZipSize(stream, absoluteOffset, remainingLength);
             return new GenericCarverMatch(string.Empty, ".zip", size > 0 ? size : EstimateUnknownSize(remainingLength), "ZIP container");
+        }
+
+        return null;
+    }
+
+    private static GenericCarverMatch? TryMatchNintendoSwitch(ReadOnlySpan<byte> header, FileStream stream, long absoluteOffset, long remainingLength)
+    {
+        if (header.Length >= 0x204
+            && header[0x200] == (byte)'N'
+            && header[0x201] == (byte)'C'
+            && header[0x202] == (byte)'A'
+            && header[0x203] is (byte)'2' or (byte)'3')
+        {
+            return new GenericCarverMatch(string.Empty, ".nca", EstimateUnknownSize(remainingLength), "Nintendo Switch NCA content archive; plaintext/decrypted header detected");
+        }
+
+        if (StartsWith(header, "PFS0"u8) && header.Length >= 0x10)
+        {
+            var size = TryGetPfs0Size(stream, absoluteOffset, remainingLength);
+            return new GenericCarverMatch(string.Empty, ".nsp", size > 0 ? size : EstimateUnknownSize(remainingLength), "Nintendo Switch NSP/PFS0 package");
+        }
+
+        if (header.Length >= 0x104 && StartsWith(header[0x100..], "HEAD"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".xci", EstimateUnknownSize(remainingLength), "Nintendo Switch XCI game card image");
+        }
+
+        if (StartsWith(header, "NRO0"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".nro", EstimateUnknownSize(remainingLength), "Nintendo Switch NRO executable");
+        }
+
+        if (StartsWith(header, "NSO0"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".nso", EstimateUnknownSize(remainingLength), "Nintendo Switch NSO executable");
         }
 
         return null;
@@ -1056,6 +1092,57 @@ public sealed class GenericFileCarver
         return 0;
     }
 
+    private static long TryGetPfs0Size(FileStream stream, long absoluteOffset, long remainingLength)
+    {
+        Span<byte> header = stackalloc byte[0x10];
+        stream.Position = absoluteOffset;
+        if (stream.Read(header) != header.Length || !StartsWith(header, "PFS0"u8))
+        {
+            return 0;
+        }
+
+        var fileCount = ReadUInt32LittleEndian(header[4..]);
+        var stringTableSize = ReadUInt32LittleEndian(header[8..]);
+        if (fileCount == 0 || fileCount > 4096 || stringTableSize > 0x100000)
+        {
+            return 0;
+        }
+
+        var entriesSize = checked((long)fileCount * 0x18);
+        var headerSize = 0x10 + entriesSize + stringTableSize;
+        if (headerSize <= 0 || headerSize > remainingLength)
+        {
+            return 0;
+        }
+
+        var entries = new byte[entriesSize];
+        stream.Position = absoluteOffset + 0x10;
+        if (stream.Read(entries, 0, entries.Length) != entries.Length)
+        {
+            return 0;
+        }
+
+        var maxEnd = headerSize;
+        for (var index = 0; index < fileCount; index++)
+        {
+            var entry = entries.AsSpan(index * 0x18, 0x18);
+            var fileOffset = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64LittleEndian(entry)));
+            var fileSize = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64LittleEndian(entry[8..])));
+            if (fileOffset < 0 || fileSize < 0)
+            {
+                return 0;
+            }
+
+            maxEnd = Math.Max(maxEnd, headerSize + fileOffset + fileSize);
+            if (maxEnd > remainingLength)
+            {
+                return 0;
+            }
+        }
+
+        return maxEnd;
+    }
+
     private static long EstimateUnknownSize(long remainingLength)
     {
         return Math.Min(remainingLength, 0x100000);
@@ -1103,6 +1190,11 @@ public sealed class GenericFileCarver
     private static ulong ReadUInt64BigEndian(ReadOnlySpan<byte> value)
     {
         return ((ulong)ReadUInt32BigEndian(value) << 32) | ReadUInt32BigEndian(value[4..]);
+    }
+
+    private static ulong ReadUInt64LittleEndian(ReadOnlySpan<byte> value)
+    {
+        return ReadUInt32LittleEndian(value) | ((ulong)ReadUInt32LittleEndian(value[4..]) << 32);
     }
 }
 

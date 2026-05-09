@@ -15,6 +15,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -22,6 +23,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -37,6 +39,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private XboxStorageImage? _xboxStorageImage;
     private PlayStationStorageImage? _playStationStorageImage;
     private GenericFileSystemImage? _genericFileSystemImage;
+    private SwitchStorageImage? _switchStorageImage;
     private DriveDatabaseSnapshot? _databaseSnapshot;
     private PartitionModel? _selectedPartition;
     private FileRow? _selectedFile;
@@ -94,6 +97,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AppLogger.LineWritten += line => Dispatcher.Invoke(() => AppendLog(line));
         RefreshRecentImages();
         RefreshSelectionState();
+        SetResultsWindowToolTips(detached: false);
         ApplyWindowStatePadding();
     }
 
@@ -290,7 +294,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanUnmountPartition => SelectedPartition != null && !_isOpeningImage && !_isMetadataScanRunning && !_isFileCarverRunning && !_isExportRunning;
 
-    private bool HasLoadedImage => Partitions.Count > 0 && (_drive != null || _xboxStorageImage != null || _playStationStorageImage != null || _genericFileSystemImage != null);
+    private bool HasLoadedImage => Partitions.Count > 0 && (_drive != null || _xboxStorageImage != null || _playStationStorageImage != null || _genericFileSystemImage != null || _switchStorageImage != null);
 
     public string StatusText
     {
@@ -537,6 +541,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
 
+        if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.NintendoSwitchNand)
+        {
+            var openedAsSwitch = await OpenSwitchImagePathAsync(imagePath, keyPath ?? string.Empty);
+            if (openedAsSwitch || imageKind == ConsoleDriveImageKind.NintendoSwitchNand)
+            {
+                return;
+            }
+        }
+
         if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.GenericFileSystem)
         {
             var openedAsGeneric = await OpenGenericFileSystemImagePathAsync(imagePath);
@@ -614,6 +627,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _playStationStorageImage = null;
             _genericFileSystemImage?.Dispose();
             _genericFileSystemImage = null;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = null;
             ClearTemporaryScanFiles();
             _databaseSnapshot = null;
             _drive?.Dispose();
@@ -672,6 +687,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _playStationStorageImage = null;
             _genericFileSystemImage?.Dispose();
             _genericFileSystemImage = null;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = null;
             ClearTemporaryScanFiles();
             _databaseSnapshot = null;
             _openedImagePath = result.fileName;
@@ -702,6 +719,64 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         showError: false);
     }
 
+    private async Task<bool> OpenSwitchImagePathAsync(string imagePath, string keyPath)
+    {
+        if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
+        {
+            StatusText = "Selected Switch key file was not found.";
+            return false;
+        }
+
+        return await RunUiTaskAsync("Opening Nintendo Switch NAND image...", () =>
+        {
+            var activeRawImagePath = Path.GetExtension(imagePath).Equals(".imgc", StringComparison.OrdinalIgnoreCase)
+                ? ImgcDecoder.DecodeToTempRawImage(imagePath)
+                : imagePath;
+            var image = SwitchStorageImage.Open(activeRawImagePath, keyPath);
+            return (image, partitions: image.Partitions.ToList(), fileName: imagePath, activeRawImagePath);
+        },
+        result =>
+        {
+            _drive?.Dispose();
+            _drive = null;
+            _xboxStorageImage?.Dispose();
+            _xboxStorageImage = null;
+            _playStationStorageImage?.Dispose();
+            _playStationStorageImage = null;
+            _genericFileSystemImage?.Dispose();
+            _genericFileSystemImage = null;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = result.image;
+            ClearTemporaryScanFiles();
+            _databaseSnapshot = null;
+            _openedImagePath = result.fileName;
+            _activeRawImagePath = result.activeRawImagePath;
+            Title = $"{AppName} - {Path.GetFileName(result.fileName)}";
+            Partitions.Clear();
+            foreach (var partition in result.partitions)
+            {
+                Partitions.Add(partition);
+            }
+
+            MetadataResults.Clear();
+            CarvedFiles.Clear();
+            RecoveryTreeRoots.Clear();
+            RecoveryRows.Clear();
+            ClusterRows.Clear();
+            _recoveryDatabase = null;
+            _recoveryIntegrity = null;
+            SelectedPartition = Partitions.FirstOrDefault(partition => partition.IsMounted) ?? Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
+            AppendLog($"Opened Nintendo Switch NAND image: {result.fileName}");
+            if (!string.Equals(result.fileName, result.activeRawImagePath, StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog($"Using decoded IMGC cache: {result.activeRawImagePath}");
+            }
+            AppendLog($"Detected Switch NAND partitions: {Partitions.Count}");
+        },
+        showError: false);
+    }
+
     private async Task<bool> OpenGenericFileSystemImagePathAsync(string imagePath)
     {
         return await RunUiTaskAsync("Opening generic filesystem image...", () =>
@@ -722,6 +797,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _playStationStorageImage = null;
             _genericFileSystemImage?.Dispose();
             _genericFileSystemImage = result.image;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = null;
             ClearTemporaryScanFiles();
             _databaseSnapshot = null;
             _openedImagePath = result.fileName;
@@ -804,6 +881,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _playStationStorageImage = result.image;
             _genericFileSystemImage?.Dispose();
             _genericFileSystemImage = null;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = null;
             ClearTemporaryScanFiles();
             _databaseSnapshot = null;
             _openedImagePath = result.fileName;
@@ -1373,6 +1452,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var genericVolume = SelectedPartition?.GenericVolume;
         if (genericVolume != null)
         {
+            if (genericVolume is SwitchFat32Volume switchVolume)
+            {
+                string decryptedPath;
+                try
+                {
+                    StatusText = $"Preparing decrypted Switch partition for carving: {switchVolume.Name}...";
+                    decryptedPath = await Task.Run(() => switchVolume.CreateDecryptedPartitionImage(CancellationToken.None));
+                    _temporaryScanFiles.Add(decryptedPath);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or CryptographicException or UnauthorizedAccessException)
+                {
+                    StatusText = "Failed";
+                    AppendLog($"Switch partition decrypt failed: {ex.Message}");
+                    MessageBox.Show(this, ex.Message, AppName, MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                await RunGenericFileCarverAsync(
+                    switchVolume.FamilyText,
+                    switchVolume.Name,
+                    decryptedPath,
+                    0,
+                    switchVolume.Length,
+                    switchVolume.Offset,
+                    requiresExistingPath: true);
+                return;
+            }
+
             await RunGenericFileCarverAsync(
                 genericVolume.FamilyText,
                 genericVolume.Name,
@@ -1760,7 +1867,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _closingMainWindow = true;
-        if (_drive == null && _xboxStorageImage == null && _playStationStorageImage == null && _genericFileSystemImage == null && _databaseSnapshot == null)
+        if (_drive == null && _xboxStorageImage == null && _playStationStorageImage == null && _genericFileSystemImage == null && _switchStorageImage == null && _databaseSnapshot == null)
         {
             if (_detachedResultsWindow != null)
             {
@@ -1801,6 +1908,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _xboxStorageImage?.Dispose();
         _playStationStorageImage?.Dispose();
         _genericFileSystemImage?.Dispose();
+        _switchStorageImage?.Dispose();
     }
 
     private void ApplyWindowStatePadding()
@@ -1991,9 +2099,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _detachedResultsWindow.DetachedTabs.SelectedItem = selectedTab == CarverTab ? CarverTab : RecoveryTab;
         ResultsTabs.SelectedItem = LogTab;
         ToggleResultsWindowText.Text = "Dock Results";
-        ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files back into the main window";
         ResultsPanelDetachText.Text = "Dock";
-        ResultsPanelDetachButton.ToolTip = "Move Recovery View and Carved Files back into the main window";
+        SetResultsWindowToolTips(detached: true);
         _detachedResultsWindow.Show();
         if (screenLocation is { } location)
         {
@@ -2041,11 +2148,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ResultsTabs.Items.Insert(logIndex + 1, CarverTab);
         ResultsTabs.SelectedItem = RecoveryTab;
         ToggleResultsWindowText.Text = "Pop Out Results";
-        ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files into a resizable window";
         ResultsPanelDetachText.Text = "Pop Out";
-        ResultsPanelDetachButton.ToolTip = "Move Recovery View and Carved Files into a resizable window";
+        SetResultsWindowToolTips(detached: false);
         _detachedResultsWindow = null;
         window.Close();
+    }
+
+    private void SetResultsWindowToolTips(bool detached)
+    {
+        var title = detached ? "Dock Results" : "Pop Out Results";
+        var description = detached
+            ? "Move Recovery View and Carved Files back into the main window."
+            : "Move Recovery View and Carved Files into a resizable window.";
+
+        ToggleResultsWindowButton.ToolTip = CreateResultsWindowToolTip(title, description, PlacementMode.Bottom);
+        ResultsPanelDetachButton.ToolTip = CreateResultsWindowToolTip(title, description, PlacementMode.Left);
+    }
+
+    private static ToolTip CreateResultsWindowToolTip(string title, string description, PlacementMode placement)
+    {
+        var body = new TextBlock
+        {
+            Text = description,
+            TextWrapping = TextWrapping.Wrap
+        };
+        body.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+
+        var content = new StackPanel
+        {
+            MaxWidth = 260
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeights.SemiBold
+        });
+        content.Children.Add(body);
+
+        return new ToolTip
+        {
+            Content = content,
+            MaxWidth = 280,
+            Placement = placement
+        };
     }
 
     private void SetClusterViewerVisible(bool visible)
@@ -2245,6 +2390,38 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SearchPlaceholder.Visibility = string.IsNullOrWhiteSpace(SearchBox.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    private void PartitionList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var item = FindVisualParent<ListBoxItem>((DependencyObject)e.OriginalSource);
+        if (item?.DataContext is not PartitionModel partition)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        PartitionList.SelectedItem = partition;
+        SelectedPartition = partition;
+        RefreshSelectionState();
+    }
+
+    private void PartitionList_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (SelectedPartition?.IsMounted != true)
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void PartitionMetadataScan_Click(object sender, RoutedEventArgs e)
+    {
+        MetadataScan_Click(sender, e);
+    }
+
+    private void PartitionFileCarver_Click(object sender, RoutedEventArgs e)
+    {
+        FileCarver_Click(sender, e);
     }
 
     private void PartitionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -4275,13 +4452,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             File.WriteAllBytes(path, residentData);
             progress?.AddBytes(residentData.Length);
-            progress?.CompleteItem();
-            return;
-        }
-
-        if (entry.Extents.Count > 0)
-        {
-            CopyRawExtents(entry.Volume.SourcePath, entry.Extents, entry.Length, path, progress);
             progress?.CompleteItem();
             return;
         }
