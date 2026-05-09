@@ -341,7 +341,7 @@ internal static class ManagedPs3StorageImage
         using var aes = Aes.Create();
         aes.Mode = CipherMode.CBC;
         aes.Padding = PaddingMode.None;
-        aes.Key = eidRootKey.AsSpan(0, 16).ToArray();
+        aes.Key = eidRootKey.AsSpan(0, 32).ToArray();
         aes.IV = eidRootKey.AsSpan(0x20, 16).ToArray();
         using var encryptor = aes.CreateEncryptor();
         return encryptor.TransformFinalBlock(seed, 0, seed.Length);

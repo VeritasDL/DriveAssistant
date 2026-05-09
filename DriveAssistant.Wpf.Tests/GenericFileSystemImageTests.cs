@@ -268,6 +268,26 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void PlayStationStorageImage_ManagedPs3Reader_RealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_KEY");
+        if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(keyPath))
+        {
+            return;
+        }
+
+        Assert.True(ManagedPs3StorageImage.TryOpen(imagePath, keyPath, out var image, out var error), error);
+        using (image)
+        {
+            Assert.NotEmpty(image.Volumes);
+            var loaded = image.Volumes.Where(volume => volume.IsLoaded).ToList();
+            Assert.NotEmpty(loaded);
+            Assert.All(loaded, volume => Assert.Equal("PlayStation 3 HDD (managed)", volume.FamilyText));
+        }
+    }
+
+    [Fact]
     public void PlayStationVolume_ParsesDeepUfsMetadataRowsIncludingNameOnlyCandidates()
     {
         var json = """
