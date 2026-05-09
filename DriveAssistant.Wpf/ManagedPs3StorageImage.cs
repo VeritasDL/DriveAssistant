@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading;
 
 namespace FATXTools.Wpf;
 
@@ -15,6 +16,9 @@ internal static class ManagedPs3StorageImage
     private const ulong Magic2 = 0xDEADFACEUL;
     private const int DiskLabelSize = 0x30;
     private const int PartitionSize = 0x90;
+    private const int UfsSuperBlockOffset = 65536;
+    private const int UfsSuperBlockProbeLength = 1500;
+    private const int Ufs2Magic = 0x19540119;
 
     private static readonly byte[] EncDecSeed00 =
     [
@@ -53,33 +57,10 @@ internal static class ManagedPs3StorageImage
                 return false;
             }
 
-            var key = File.Exists(keyPath) ? File.ReadAllBytes(keyPath) : [];
             using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
-
-            Ps3CryptoKeys? cryptoKeys = null;
-            var mode = Ps3DiskCryptoMode.Plaintext;
-            var header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
-            if (!HasDiskLabel(header.AsSpan(0, SectorSize)))
+            var key = ReadKeyOrEmpty(keyPath);
+            if (!TryReadDiskHeaderWithDetectedMode(stream, key, out var mode, out var cryptoKeys, out var header, out error))
             {
-                if (key.Length < 0x30)
-                {
-                    error = "PS3 encrypted HDD images require an EID root key with at least 0x30 bytes. Already-decrypted images can be opened without a key.";
-                    return false;
-                }
-
-                cryptoKeys = Ps3CryptoKeys.Generate(key);
-                mode = Ps3DiskCryptoMode.PhatAtaCbcSwapped;
-                header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
-                if (!HasDiskLabel(header.AsSpan(0, SectorSize)))
-                {
-                    mode = Ps3DiskCryptoMode.SlimAtaXtsSwapped;
-                    header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
-                }
-            }
-
-            if (!HasDiskLabel(header.AsSpan(0, SectorSize)))
-            {
-                error = "No PS3 Cell disklabel was found.";
                 return false;
             }
 
@@ -117,6 +98,99 @@ internal static class ManagedPs3StorageImage
         }
     }
 
+    internal static string CreateDecryptedImage(string imagePath, string keyPath, string outputPath, CancellationToken cancellationToken, IProgress<long>? progress = null)
+    {
+        if (!File.Exists(imagePath))
+        {
+            throw new FileNotFoundException("Image file does not exist.", imagePath);
+        }
+
+        if (string.Equals(Path.GetFullPath(imagePath), Path.GetFullPath(outputPath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("PS3 decrypted output path must be different from the source image path.");
+        }
+
+        var key = ReadKeyOrEmpty(keyPath);
+        using var input = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4 * 1024 * 1024, FileOptions.SequentialScan);
+        if (!TryReadDiskHeaderWithDetectedMode(input, key, out var mode, out var cryptoKeys, out _, out var error))
+        {
+            throw new InvalidDataException(error ?? "Could not detect PS3 HDD encryption mode.");
+        }
+
+        input.Position = 0;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
+        using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read, 4 * 1024 * 1024, FileOptions.SequentialScan);
+        var buffer = new byte[4 * 1024 * 1024];
+        long offset = 0;
+        int read;
+        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (mode != Ps3DiskCryptoMode.Plaintext)
+            {
+                var alignedLength = read - read % SectorSize;
+                if (alignedLength > 0)
+                {
+                    ApplyDiskCrypto(buffer.AsSpan(0, alignedLength), (ulong)(offset / SectorSize), mode, cryptoKeys);
+                }
+            }
+
+            output.Write(buffer, 0, read);
+            offset += read;
+            progress?.Report(offset);
+        }
+
+        progress?.Report(input.Length);
+        return outputPath;
+    }
+
+    private static byte[] ReadKeyOrEmpty(string? keyPath)
+    {
+        return !string.IsNullOrWhiteSpace(keyPath) && File.Exists(keyPath) ? File.ReadAllBytes(keyPath) : [];
+    }
+
+    private static bool TryReadDiskHeaderWithDetectedMode(
+        FileStream stream,
+        byte[] key,
+        out Ps3DiskCryptoMode mode,
+        out Ps3CryptoKeys? cryptoKeys,
+        out byte[] header,
+        out string? error)
+    {
+        error = null;
+        cryptoKeys = null;
+        mode = Ps3DiskCryptoMode.Plaintext;
+        header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
+        if (HasDiskLabel(header.AsSpan(0, SectorSize)))
+        {
+            return true;
+        }
+
+        if (key.Length < 0x30)
+        {
+            error = "PS3 encrypted HDD images require an EID root key with at least 0x30 bytes. Already-decrypted images can be opened without a key.";
+            return false;
+        }
+
+        cryptoKeys = Ps3CryptoKeys.Generate(key);
+        mode = Ps3DiskCryptoMode.PhatAtaCbcSwapped;
+        header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
+        if (HasDiskLabel(header.AsSpan(0, SectorSize)))
+        {
+            return true;
+        }
+
+        mode = Ps3DiskCryptoMode.SlimAtaXtsSwapped;
+        header = ReadDiskHeader(stream, 0x2000, mode, cryptoKeys);
+        if (HasDiskLabel(header.AsSpan(0, SectorSize)))
+        {
+            return true;
+        }
+
+        error = "No PS3 Cell disklabel was found.";
+        return false;
+    }
+
     private static byte[] ReadDiskHeader(FileStream stream, int length, Ps3DiskCryptoMode mode, Ps3CryptoKeys? keys)
     {
         var buffer = new byte[length];
@@ -134,7 +208,9 @@ internal static class ManagedPs3StorageImage
         var rows = new List<ManagedPs3Partition>();
         var imageLength = stream.Length;
         var entries = ParsePartitionTable(header.AsSpan(DiskLabelSize));
-        var hasVflash = mode == Ps3DiskCryptoMode.SlimAtaXtsSwapped || HasNestedVflashLabel(header, mode, keys);
+        var hasVflash = mode == Ps3DiskCryptoMode.SlimAtaXtsSwapped
+                        || HasNestedVflashLabel(header, mode, keys)
+                        || LooksLikeVflashFirstLayout(stream, entries, mode, keys);
         var hdd0Index = hasVflash ? 1 : 0;
         var hdd1Index = hasVflash ? 2 : 1;
 
@@ -146,6 +222,44 @@ internal static class ManagedPs3StorageImage
         AddPartition(rows, imageLength, "dev_hdd0", entries.ElementAtOrDefault(hdd0Index), Ps3FileSystem.Ufs2, bigEndian: true, extraVflashCrypto: false);
         AddPartition(rows, imageLength, "dev_hdd1", entries.ElementAtOrDefault(hdd1Index), Ps3FileSystem.Fat, bigEndian: false, extraVflashCrypto: false);
         return rows;
+    }
+
+    private static bool LooksLikeVflashFirstLayout(FileStream stream, IReadOnlyList<Ps3RawPartition> entries, Ps3DiskCryptoMode mode, Ps3CryptoKeys? keys)
+    {
+        if (entries.Count < 3 || entries[0].Size == 0 || entries[1].Size == 0)
+        {
+            return false;
+        }
+
+        return !LooksLikeBigEndianUfs2Partition(stream, entries[0], mode, keys)
+               && LooksLikeBigEndianUfs2Partition(stream, entries[1], mode, keys);
+    }
+
+    private static bool LooksLikeBigEndianUfs2Partition(FileStream stream, Ps3RawPartition partition, Ps3DiskCryptoMode mode, Ps3CryptoKeys? keys)
+    {
+        var offset = checked((long)(partition.Start * SectorSize + UfsSuperBlockOffset));
+        if (offset < 0 || offset + UfsSuperBlockProbeLength > stream.Length)
+        {
+            return false;
+        }
+
+        try
+        {
+            var data = ReadAbsolute(stream, offset, UfsSuperBlockProbeLength, mode, keys);
+            for (var index = 0; index + 4 <= data.Length; index += 4)
+            {
+                if (BinaryPrimitives.ReadInt32BigEndian(data.AsSpan(index, 4)) == Ufs2Magic)
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or CryptographicException or ArgumentException or OverflowException)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static IReadOnlyList<ManagedPs3Partition> BuildVflashPartitions(FileStream stream, Ps3RawPartition vflash, Ps3DiskCryptoMode mode, Ps3CryptoKeys? keys)

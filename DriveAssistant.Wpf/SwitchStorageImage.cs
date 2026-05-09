@@ -363,7 +363,7 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
         }
     }
 
-    public string CreateDecryptedPartitionImage(CancellationToken cancellationToken)
+    public string CreateDecryptedPartitionImage(CancellationToken cancellationToken, IProgress<long>? progress = null)
     {
         var path = Path.Combine(Path.GetTempPath(), $"drive-assistant-switch-{Guid.NewGuid():N}.img");
         const int bufferSize = SwitchBisPartitionReader.CryptoSectorSize * 256;
@@ -380,6 +380,7 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
 
             output.Write(buffer, 0, count);
             offset += count;
+            progress?.Report(offset);
         }
 
         return path;
@@ -466,6 +467,11 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
                 var firstDataCluster = ((uint)BinaryPrimitives.ReadUInt16LittleEndian(entry[20..]) << 16)
                                        | BinaryPrimitives.ReadUInt16LittleEndian(entry[26..]);
                 var size = BinaryPrimitives.ReadUInt32LittleEndian(entry[28..]);
+                if (deleted && isDirectory && LooksLikeSwitchContentFile(name))
+                {
+                    isDirectory = false;
+                }
+
                 var childPath = CombinePath(path, name);
                 var clusters = deleted
                     ? BuildContiguousClusterList(firstDataCluster, isDirectory ? ClusterSize : size)
@@ -507,6 +513,19 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
         var buffer = new byte[ClusterSize];
         _reader.Read(ClusterToRelativeOffset(cluster), buffer);
         return buffer;
+    }
+
+    private static bool LooksLikeSwitchContentFile(string name)
+    {
+        var extension = Path.GetExtension(name);
+        return extension.Equals(".nca", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".nsp", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".xci", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".nro", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".nso", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".tik", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".cert", StringComparison.OrdinalIgnoreCase)
+               || extension.Equals(".cnmt", StringComparison.OrdinalIgnoreCase);
     }
 
     private List<uint> GetClusterChain(uint firstCluster)

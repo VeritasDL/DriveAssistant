@@ -310,6 +310,54 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void PlayStationStorageImage_ManagedPs3Reader_KeyRequiredRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_KEY");
+        if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(keyPath))
+        {
+            return;
+        }
+
+        Assert.False(ManagedPs3StorageImage.TryOpen(imagePath, string.Empty, out _, out var noKeyError));
+        Assert.Contains("EID root key", noKeyError);
+
+        Assert.True(ManagedPs3StorageImage.TryOpen(imagePath, keyPath, out var image, out var keyedError), keyedError);
+        using (image)
+        {
+            Assert.NotEmpty(image.Volumes);
+            Assert.Contains(image.Volumes, volume => volume.IsLoaded);
+        }
+    }
+
+    [Fact]
+    public void PlayStationStorageImage_ManagedPs3Reader_AlreadyDecryptedRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_KEY");
+        var decryptedPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS3_E2E_DECRYPTED_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(keyPath) || string.IsNullOrWhiteSpace(decryptedPath))
+        {
+            return;
+        }
+
+        var sourceLength = new FileInfo(imagePath).Length;
+        if (!File.Exists(decryptedPath) || new FileInfo(decryptedPath).Length != sourceLength)
+        {
+            ManagedPs3StorageImage.CreateDecryptedImage(imagePath, keyPath, decryptedPath, CancellationToken.None);
+        }
+
+        Assert.True(ManagedPs3StorageImage.TryOpen(decryptedPath, string.Empty, out var image, out var error), error);
+        using (image)
+        {
+            Assert.NotEmpty(image.Volumes);
+            var loaded = image.Volumes.Where(volume => volume.IsLoaded).ToList();
+            Assert.NotEmpty(loaded);
+            Assert.All(loaded, volume => Assert.Equal("PlayStation 3 HDD (managed)", volume.FamilyText));
+        }
+    }
+
+    [Fact]
     public void PlayStationVolume_ParsesDeepUfsMetadataRowsIncludingNameOnlyCandidates()
     {
         var json = """
@@ -553,6 +601,135 @@ bis_key_02_tweak = 88887777666655554444333322221111
 
         Assert.True(keys.TryGet(3, out _));
         Assert.True(keys.TryGet(2, out _));
+    }
+
+    [Fact]
+    public void SwitchDeletedContentExtensions_AreTreatedAsFiles()
+    {
+        var type = typeof(SwitchStorageImage).Assembly.GetType("FATXTools.Wpf.SwitchFat32Volume", throwOnError: true)!;
+        var method = type.GetMethod("LooksLikeSwitchContentFile", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        Assert.True((bool)method.Invoke(null, new object[] { "3ecb1d9e787e8f6df2728ed8cb94f891.nca" })!);
+        Assert.True((bool)method.Invoke(null, new object[] { "base.nsp" })!);
+        Assert.False((bool)method.Invoke(null, new object[] { "Nintendo" })!);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_OpensWiiDiscImageForRawRecovery()
+    {
+        var image = new byte[0x8000];
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x18), 0x5D1C9EA3);
+
+        using var temp = new TempFile(image);
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+        Assert.Equal("Nintendo Wii optical image", volume.FamilyText);
+        Assert.Contains("raw Wii disc", partition.Status);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_ExplicitWiiUAllowsEncryptedRawCandidate()
+    {
+        var image = new byte[0x8000];
+        image[0x2000] = 0xA5;
+
+        using var temp = new TempFile(image);
+        using var storage = NintendoStorageImage.Open(temp.Path, allowRawWiiUCandidate: true);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+        Assert.Equal("Nintendo Wii U WFS", volume.FamilyText);
+        Assert.Contains("OTP", partition.Status);
+    }
+
+    [Fact]
+    public void WiiUKeyMaterial_DerivesUsbKeyFromOtpAndSeeprom()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var otp = new byte[1024];
+            var seeprom = new byte[512];
+            for (var i = 0; i < 0x10; i++)
+            {
+                otp[0x130 + i] = (byte)i;
+                otp[0x180 + i] = (byte)(0x80 + i);
+                seeprom[0xB0 + i] = (byte)(0x20 + i);
+            }
+
+            File.WriteAllBytes(Path.Combine(dir.FullName, "otp.bin"), otp);
+            File.WriteAllBytes(Path.Combine(dir.FullName, "seeprom.bin"), seeprom);
+
+            Assert.True(WiiUKeyMaterial.TryLoad(dir.FullName, out var material, out var status), status);
+            Assert.NotNull(material);
+            Assert.NotNull(material!.UsbKey);
+            Assert.Equal(otp.AsSpan(0x180, 0x10).ToArray(), material.MlcKey);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WiiUWfsInspector_RecognizesPlainHeader()
+    {
+        var image = new byte[0x4000];
+        WriteWfsHeader(image.AsSpan(0, 0x1000), deviceType: 0x16A2);
+
+        using var temp = new TempFile(image);
+        var info = WiiUWfsInspector.Inspect(temp.Path, null);
+
+        Assert.True(info.IsValid, info.Detail);
+        Assert.False(info.IsEncrypted);
+        Assert.Equal((ushort)0x16A2, info.DeviceType);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_OpensPlainWfsImageWithoutKeys()
+    {
+        var image = new byte[0x4000];
+        WriteWfsHeader(image.AsSpan(0, 0x1000), deviceType: 0x16A2);
+
+        using var temp = new TempFile(image);
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+        Assert.Equal("Nintendo Wii U WFS", volume.FamilyText);
+        Assert.Contains("Plain WFS header detected", partition.Status);
+    }
+
+    [Fact]
+    public void Ps2StorageImage_OpensApaPartitionTable()
+    {
+        using var temp = new TempFile(CreatePs2ApaImage());
+        using var storage = Ps2StorageImage.Open(temp.Path);
+
+        Assert.NotEmpty(storage.Partitions);
+        Assert.Contains(storage.Partitions, partition => partition.Name == "__mbr");
+        Assert.Contains(storage.Partitions, partition => partition.Name == "PP.TEST");
+    }
+
+    [Fact]
+    public void GenericCarver_DetectsWiiWiiUAndPs2StorageMarkers()
+    {
+        var image = new byte[0x9000];
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x18), 0x5D1C9EA3);
+        Encoding.ASCII.GetBytes("WBFS").CopyTo(image.AsSpan(0x2000));
+        Encoding.ASCII.GetBytes("WFS").CopyTo(image.AsSpan(0x4000));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x6004), 0x00415041);
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "console image", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Contains(rows, row => row.Kind == "ISO" && row.Detail.Contains("Nintendo Wii"));
+        Assert.Contains(rows, row => row.Kind == "WBFS");
+        Assert.Contains(rows, row => row.Kind == "WFS");
+        Assert.Contains(rows, row => row.Kind == "PS2HDD");
     }
 
     [Fact]
@@ -899,6 +1076,34 @@ bis_key_02_tweak = 88887777666655554444333322221111
 
         partitionPayload.CopyTo(image.AsSpan(partitionOffset));
         return image;
+    }
+
+    private static byte[] CreatePs2ApaImage()
+    {
+        var image = new byte[0x40000];
+        WritePs2ApaHeader(image.AsSpan(0), "__mbr", startSector: 0, lengthSectors: 0x80, nextSector: 0x80, type: 0);
+        WritePs2ApaHeader(image.AsSpan(0x80 * 512), "PP.TEST", startSector: 0x80, lengthSectors: 0x100, nextSector: 0, type: 0x0100);
+        return image;
+    }
+
+    private static void WritePs2ApaHeader(Span<byte> header, string id, uint startSector, uint lengthSectors, uint nextSector, ushort type)
+    {
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 0x00415041);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[8..], nextSector);
+        Encoding.ASCII.GetBytes(id).CopyTo(header[16..]);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[64..], startSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[68..], lengthSectors);
+        BinaryPrimitives.WriteUInt16LittleEndian(header[72..], type);
+    }
+
+    private static void WriteWfsHeader(Span<byte> block, ushort deviceType)
+    {
+        BinaryPrimitives.WriteUInt32BigEndian(block[0..], 0x00C00000);
+        BinaryPrimitives.WriteUInt32BigEndian(block[0x18..], 0x12345678);
+        BinaryPrimitives.WriteUInt32BigEndian(block[0x1C..], 0x01010800);
+        BinaryPrimitives.WriteUInt16BigEndian(block[0x20..], deviceType);
+        BinaryPrimitives.WriteUInt32BigEndian(block[0x28..], 0xE0000000);
+        BinaryPrimitives.WriteUInt32BigEndian(block[0x3C..], 1);
     }
 
     private static byte[] CreatePs4OrbisFat16Image(int gptEntryIndex = 0, bool encryptWithIvOffset = false, bool includeDeletedEntry = false)

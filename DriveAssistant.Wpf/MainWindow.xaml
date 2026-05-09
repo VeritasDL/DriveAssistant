@@ -1231,6 +1231,7 @@
                             </Grid.Style>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
@@ -1239,7 +1240,30 @@
                                 <TextBlock Text="{Binding InspectorSubtitle}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
                             </StackPanel>
 
-                            <ItemsControl Grid.Row="1" ItemsSource="{Binding InspectorRows}">
+                            <Border Grid.Row="1"
+                                    Background="{DynamicResource PanelBg2Brush}"
+                                    BorderBrush="{DynamicResource LineSoftBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Padding="8"
+                                    Margin="0,0,0,12">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsInspectorPreviewVisible}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Image Source="{Binding InspectorPreviewImage}"
+                                       Stretch="Uniform"
+                                       MaxHeight="210"
+                                       SnapsToDevicePixels="True" />
+                            </Border>
+
+                            <ItemsControl Grid.Row="2" ItemsSource="{Binding InspectorRows}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Background="{DynamicResource PanelBg2Brush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6" Padding="11" Margin="0,0,0,10">

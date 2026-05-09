@@ -25,6 +25,9 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, nested readable filesystem probing where possible. |
 | PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
 | PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
+| PlayStation 2 | APA partition table detection for PS2 HDD images, PFS/HDLoader partition classification, raw partition export, and partition-scoped carving. |
+| Nintendo Wii / GameCube | Raw disc image detection, WBFS container detection, raw export, and Wii/GameCube/WBFS carving signatures. |
+| Nintendo Wii U | WFS/dev storage candidate detection, raw export, WFS/FST carving signatures, and key-gated recovery planning for OTP/SEEPROM-backed storage. |
 | Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving. |
 
 ## Recovery Workflows
@@ -58,10 +61,25 @@ Format-specific carving includes:
 
 - Xbox 360 XEX variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 - PS4 packages: `CNT` package headers as `PKG`, including observed type-`1` debug packages as `DPKG`.
+- PS2 storage: APA HDD partition headers.
+- Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, Wii U WFS markers, and Wii U FST markers.
 - Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
 - Custom signatures from `custom_carvers.json`.
 
 Raw encrypted content is not magically decrypted by carving. For encrypted console storage, mount or decrypt the relevant partition first when keys are available.
+
+## Wii U WFS Keys
+
+Wii U WFS storage is console-keyed. Current builds identify WFS/dev HDD candidates, accept local key material, derive the USB key from OTP plus SEEPROM, and validate/decrypt the WFS device header when the matching files are supplied. Full directory browsing still depends on valid key material from the console that formatted the drive.
+
+Accepted key paths:
+
+- A folder containing `otp.bin` and `seeprom.bin`.
+- `otp.bin` directly, with `seeprom.bin` in the same folder when opening USB/dev HDD images.
+
+`otp.bin` is normally 1024 bytes. `seeprom.bin` is normally 512 bytes. Do not publish real console OTP or SEEPROM dumps; keep them local, mirroring the Switch key-file approach.
+
+Some preserved Wii U devkit HDD dumps are ZIP64 local-header archives without a normal ZIP central directory. Drive Assistant will not silently expand a hundreds-of-GB raw image unless the temp drive has enough free space; if it cannot extract the raw `.img`, it reports the archive as a ZIP-wrapped candidate instead of pretending the compressed wrapper is browseable WFS data.
 
 ## Nintendo Switch Keys
 

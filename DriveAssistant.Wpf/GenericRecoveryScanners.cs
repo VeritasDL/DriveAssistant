@@ -306,6 +306,8 @@ public sealed class GenericFileCarver
     {
         return TryMatchPlayStation(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchXbox(header, stream, absoluteOffset, remainingLength)
+               ?? TryMatchNintendoLegacy(header, remainingLength)
+               ?? TryMatchPlayStation2(header, remainingLength)
                ?? TryMatchNintendoSwitch(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchCommon(header, stream, absoluteOffset, remainingLength);
     }
@@ -673,6 +675,50 @@ public sealed class GenericFileCarver
         if (StartsWith(header, "NSO0"u8))
         {
             return new GenericCarverMatch(string.Empty, ".nso", EstimateUnknownSize(remainingLength), "Nintendo Switch NSO executable");
+        }
+
+        return null;
+    }
+
+    private static GenericCarverMatch? TryMatchNintendoLegacy(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        if (StartsWith(header, "WBFS"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".wbfs", EstimateUnknownSize(remainingLength), "Nintendo Wii WBFS container");
+        }
+
+        if (header.Length >= 0x20)
+        {
+            var magic = ReadUInt32BigEndian(header[0x18..]);
+            if (magic == 0x5D1C9EA3)
+            {
+                return new GenericCarverMatch(string.Empty, ".iso", EstimateUnknownSize(remainingLength), "Nintendo Wii optical disc image");
+            }
+
+            if (magic == 0xC2339F3D)
+            {
+                return new GenericCarverMatch(string.Empty, ".iso", EstimateUnknownSize(remainingLength), "Nintendo GameCube optical disc image");
+            }
+        }
+
+        if (StartsWith(header, "WFS"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".wfs", EstimateUnknownSize(remainingLength), "Nintendo Wii U WFS storage marker");
+        }
+
+        if (StartsWith(header, "FST\0"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".fst", EstimateUnknownSize(remainingLength), "Nintendo Wii U filesystem table");
+        }
+
+        return null;
+    }
+
+    private static GenericCarverMatch? TryMatchPlayStation2(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        if (header.Length >= 0x10 && ReadUInt32LittleEndian(header[4..]) == 0x00415041)
+        {
+            return new GenericCarverMatch(string.Empty, ".ps2hdd", EstimateUnknownSize(remainingLength), "PlayStation 2 APA HDD partition header");
         }
 
         return null;
