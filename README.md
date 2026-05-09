@@ -114,11 +114,13 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 - Custom carving signatures can be loaded from `custom_carvers.json`; keep custom patterns specific.
 - Nested XVD/XVC probing detects readable inner filesystem headers. It does not decrypt encrypted XVD content.
 - Xbox 360 XEX carving recognizes known executable magic variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
+- PS4 package carving recognizes `CNT` package headers as `PKG`, and classifies observed type-`1` debug packages as `DPKG`.
 
 ## Roadmap / TODO
 
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
 - Continue PS4 deleted-file validation with images that contain known nonzero deleted UFS file data. The current managed PS4 reader loads the tested devkit raw image, exports active files, decrypts partitions, and finds name-only deleted dirent candidates, but that image does not prove full deleted-file data recovery.
+- Research PS5 support separately from PS4 by adding `ssd0.*` partition discovery, validating tEXFAT/exFAT and UFS partition readers, and identifying what PS5 `bfs` user storage requires before claiming PS5 image support.
 - Decide whether to remove the bundled PlayStation native bridge entirely or keep it as a PS3/manual-mount fallback. The unified PS4 image path now has managed Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support.
 - If the native PlayStation bridge is removed, port the separate PlayStation Mount window and remaining PS3 HDD paths to managed code first.
 - Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
@@ -148,6 +150,7 @@ The bundled PlayStation helper lineage comes from [PS-HDD-Tools](https://github.
 - [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
 - [Microsoft exFAT file system specification](https://learn.microsoft.com/windows/win32/fileio/exfat-specification) for exFAT layout reference.
 - [FreeBSD UFS dinode definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dinode.h), [directory entry definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dir.h), and [FFS superblock definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ffs/fs.h) for UFS2 metadata parsing and recovery heuristics.
+- [PSDevWiki PS4 PKG files](https://www.psdevwiki.com/ps4/PKG_files), [PS4 partitions](https://www.psdevwiki.com/ps4/Partitions), [PS5 partitions](https://www.psdevwiki.com/ps5/Partitions), [PS5 filesystem](https://www.psdevwiki.com/ps5/Filesystem), and [PS5 kernel](https://www.psdevwiki.com/ps5/Kernel) for PlayStation package and storage-layout references.
 - [.NET application publishing documentation](https://learn.microsoft.com/dotnet/core/deploying/) for the self-contained Windows release package workflow.
 
 ## Documentation

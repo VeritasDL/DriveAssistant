@@ -22,7 +22,7 @@
 
         <StackPanel Margin="0,0,0,0">
             <TextBlock Text="Open console drive image" FontSize="22" FontWeight="SemiBold" />
-            <TextBlock Text="Choose the console image type and add key files when the format requires them."
+            <TextBlock Text="Choose the console image type. PlayStation key files are optional for already-decrypted images."
                        Foreground="{DynamicResource MutedBrush}"
                        Margin="0,4,0,0" />
         </StackPanel>
@@ -78,7 +78,8 @@
                      Grid.Column="1"
                      Margin="0,0,10,0"
                      VerticalAlignment="Center"
-                     TextChanged="Input_TextChanged" />
+                     TextChanged="Input_TextChanged"
+                     ToolTip="Optional for already-decrypted PlayStation images." />
             <Button x:Name="BrowseKeyButton"
                     Grid.Row="4"
                     Grid.Column="2"

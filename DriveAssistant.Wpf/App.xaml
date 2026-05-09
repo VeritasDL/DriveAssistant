@@ -130,9 +130,11 @@
                                 CornerRadius="6"
                                 Padding="{TemplateBinding Padding}"
                                 MaxWidth="{TemplateBinding MaxWidth}">
-                            <TextBlock Text="{TemplateBinding Content}"
-                                       Foreground="{TemplateBinding Foreground}"
-                                       TextWrapping="Wrap" />
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                              RecognizesAccessKey="False"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>

@@ -14,6 +14,11 @@ namespace FATX.Analyzers.Signatures
 
         public override bool Test()
         {
+            if (!CanReadRelative(0, 4))
+            {
+                return false;
+            }
+
             byte[] magic = this.ReadBytes(4);
             if (magic.Length < 4 || magic[0] != (byte)'X' || magic[1] != (byte)'E' || magic[2] != (byte)'X')
             {
@@ -30,9 +35,19 @@ namespace FATX.Analyzers.Signatures
 
         public override void Parse()
         {
+            if (!CanReadRelative(0x10, 8))
+            {
+                return;
+            }
+
             Seek(0x10);
             var securityOffset = ReadUInt32();
             var headerCount = ReadUInt32();
+            if (headerCount > 1024 || !CanReadRelative(0x18, headerCount * 8L))
+            {
+                return;
+            }
+
             uint fileNameOffset = 0;
             for (int i = 0; i < headerCount; i++)
             {
@@ -46,9 +61,14 @@ namespace FATX.Analyzers.Signatures
                     ReadUInt32();
                 }
             }
+            if (!CanReadRelative(securityOffset + 4, 4))
+            {
+                return;
+            }
+
             Seek(securityOffset + 4);
             this.FileSize = ReadUInt32();
-            if (fileNameOffset != 0)
+            if (fileNameOffset != 0 && CanReadRelative(fileNameOffset + 4, 1))
             {
                 Seek(fileNameOffset + 4);
                 this.FileName = Path.ChangeExtension(ReadCString(), ".xex");

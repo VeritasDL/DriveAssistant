@@ -125,6 +125,19 @@
                             <TextBlock Text="Open Image" />
                         </StackPanel>
                     </Button>
+                    <ComboBox x:Name="RecentImagesCombo"
+                              Width="210"
+                              MinHeight="34"
+                              Margin="5,3"
+                              ItemsSource="{Binding RecentImages}"
+                              SelectionChanged="RecentImagesCombo_SelectionChanged"
+                              ToolTip="Open a recently selected HDD image">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
                     <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE8E5;" />
@@ -153,6 +166,18 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE74E;" />
                             <TextBlock Text="Save Selected" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconText}" Text="&#xE710;" />
+                            <TextBlock Text="Add Partition" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconText}" Text="&#xE711;" />
+                            <TextBlock Text="Unmount" />
                         </StackPanel>
                     </Button>
                     <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="Settings_Click">
@@ -476,54 +501,75 @@
                                         BorderThickness="0,0,0,1"
                                         CornerRadius="6,6,0,0"
                                         Padding="12,8">
-                                    <WrapPanel VerticalAlignment="Center">
-                                        <TextBlock Text="Row colors"
+                                    <Grid>
+                                        <TextBlock Text="{Binding CurrentDirectorySummary}"
                                                    Foreground="{DynamicResource MutedBrush}"
                                                    FontSize="12"
-                                                   FontWeight="SemiBold"
-                                                   Margin="0,0,12,0"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Margin="0,0,36,0"
                                                    VerticalAlignment="Center" />
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusContiguousBgBrush}" BorderBrush="#6CFFB0" BorderThickness="1.5" Margin="0,0,6,0">
-                                                <Border.Effect>
-                                                    <DropShadowEffect Color="#38D47B" BlurRadius="10" ShadowDepth="0" Opacity="0.8" />
-                                                </Border.Effect>
-                                            </Border>
-                                            <TextBlock Text="Contiguous" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFragmentedBgBrush}" BorderBrush="#FFD166" BorderThickness="1.5" Margin="0,0,6,0">
-                                                <Border.Effect>
-                                                    <DropShadowEffect Color="#F5B84B" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
-                                                </Border.Effect>
-                                            </Border>
-                                            <TextBlock Text="Fragmented / collisions" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFullyFragmentedBgBrush}" BorderBrush="#FF8C6A" BorderThickness="1.5" Margin="0,0,6,0">
-                                                <Border.Effect>
-                                                    <DropShadowEffect Color="#FF704F" BlurRadius="10" ShadowDepth="0" Opacity="0.85" />
-                                                </Border.Effect>
-                                            </Border>
-                                            <TextBlock Text="Fully fragmented / overwritten" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
-                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusEmptyBgBrush}" BorderBrush="#7FB2FF" BorderThickness="1.5" Margin="0,0,6,0">
-                                                <Border.Effect>
-                                                    <DropShadowEffect Color="#5EA1FF" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
-                                                </Border.Effect>
-                                            </Border>
-                                            <TextBlock Text="Empty / sparse / resident" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusUnrecoverableBgBrush}" BorderBrush="#FF6B81" BorderThickness="1.5" Margin="0,0,6,0">
-                                                <Border.Effect>
-                                                    <DropShadowEffect Color="#FF5D73" BlurRadius="10" ShadowDepth="0" Opacity="0.86" />
-                                                </Border.Effect>
-                                            </Border>
-                                            <TextBlock Text="Deleted / orphan inode / unrecoverable" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </WrapPanel>
+                                        <Border HorizontalAlignment="Right"
+                                                Width="24"
+                                                Height="24"
+                                                CornerRadius="12"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                BorderBrush="{DynamicResource AccentBrush}"
+                                                BorderThickness="1"
+                                                Cursor="Help">
+                                            <Border.ToolTip>
+                                                <ToolTip>
+                                                    <StackPanel MinWidth="250">
+                                                        <TextBlock Text="Row colors" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusContiguousBgBrush}" BorderBrush="#6CFFB0" BorderThickness="1.5" Margin="0,0,8,0">
+                                                                <Border.Effect>
+                                                                    <DropShadowEffect Color="#38D47B" BlurRadius="10" ShadowDepth="0" Opacity="0.8" />
+                                                                </Border.Effect>
+                                                            </Border>
+                                                            <TextBlock Text="Contiguous" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFragmentedBgBrush}" BorderBrush="#FFD166" BorderThickness="1.5" Margin="0,0,8,0">
+                                                                <Border.Effect>
+                                                                    <DropShadowEffect Color="#F5B84B" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
+                                                                </Border.Effect>
+                                                            </Border>
+                                                            <TextBlock Text="Fragmented / collisions" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusFullyFragmentedBgBrush}" BorderBrush="#FF8C6A" BorderThickness="1.5" Margin="0,0,8,0">
+                                                                <Border.Effect>
+                                                                    <DropShadowEffect Color="#FF704F" BlurRadius="10" ShadowDepth="0" Opacity="0.85" />
+                                                                </Border.Effect>
+                                                            </Border>
+                                                            <TextBlock Text="Fully fragmented / overwritten" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusEmptyBgBrush}" BorderBrush="#7FB2FF" BorderThickness="1.5" Margin="0,0,8,0">
+                                                                <Border.Effect>
+                                                                    <DropShadowEffect Color="#5EA1FF" BlurRadius="10" ShadowDepth="0" Opacity="0.82" />
+                                                                </Border.Effect>
+                                                            </Border>
+                                                            <TextBlock Text="Empty / sparse / resident" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Border Width="16" Height="16" CornerRadius="3" Background="{DynamicResource StatusUnrecoverableBgBrush}" BorderBrush="#FF6B81" BorderThickness="1.5" Margin="0,0,8,0">
+                                                                <Border.Effect>
+                                                                    <DropShadowEffect Color="#FF5D73" BlurRadius="10" ShadowDepth="0" Opacity="0.86" />
+                                                                </Border.Effect>
+                                                            </Border>
+                                                            <TextBlock Text="Deleted / orphan inode / unrecoverable" Foreground="{DynamicResource MutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </Border.ToolTip>
+                                            <TextBlock Text="?"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       FontWeight="Bold"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                    </Grid>
                                 </Border>
                                 <DataGrid x:Name="FilesGrid"
                                       Grid.Row="1"

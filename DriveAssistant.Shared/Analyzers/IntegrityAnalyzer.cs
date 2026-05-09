@@ -33,7 +33,11 @@ namespace FATX.Analyzers
         {
             foreach (var cluster in databaseFile.ClusterChain)
             {
-                var occupants = clusterMap[(uint)cluster];
+                if (!clusterMap.TryGetValue((uint)cluster, out var occupants))
+                {
+                    continue;
+                }
+
                 if (!occupants.Contains(databaseFile))
                     occupants.Add(databaseFile);
             }
@@ -98,7 +102,7 @@ namespace FATX.Analyzers
             // also claiming it.
             foreach (var cluster in databaseFile.ClusterChain)
             {
-                if (clusterMap[(uint)cluster].Count > 1)
+                if (clusterMap.TryGetValue((uint)cluster, out var occupants) && occupants.Count > 1)
                 {
                     collidingClusters.Add((uint)cluster);
                 }
@@ -112,7 +116,11 @@ namespace FATX.Analyzers
             var dirent = databaseFile.GetDirent();
             foreach (var cluster in collisions)
             {
-                var clusterEnts = clusterMap[(uint)cluster];
+                if (!clusterMap.TryGetValue(cluster, out var clusterEnts))
+                {
+                    continue;
+                }
+
                 foreach (var ent in clusterEnts)
                 {
                     var entDirent = ent.GetDirent();

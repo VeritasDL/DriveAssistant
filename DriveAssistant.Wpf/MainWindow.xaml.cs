@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -76,6 +77,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly List<string> _logLines = new();
     private readonly Dictionary<string, int> _liveLogLineIndexes = new();
     private readonly List<string> _temporaryScanFiles = new();
+    private bool _suppressRecentImageSelection;
 
     public MainWindow()
     {
@@ -84,6 +86,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DataContext = this;
         AppLogger.Configure(_settings.LogFile, _settings.EnableFileLogging);
         AppLogger.LineWritten += line => Dispatcher.Invoke(() => AppendLog(line));
+        RefreshRecentImages();
         RefreshSelectionState();
         ApplyWindowStatePadding();
     }
@@ -143,6 +146,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<ScanProgressRow> ScanProgressRows { get; } = new();
 
     public ObservableCollection<InspectorRow> InspectorRows { get; } = new();
+
+    public ObservableCollection<string> RecentImages { get; } = new();
 
     public string CurrentFileSystemTitle
     {
@@ -254,6 +259,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(HasOpenDatabase));
                 OnPropertyChanged(nameof(CanCancelScan));
                 OnPropertyChanged(nameof(CanCancelExport));
+                OnPropertyChanged(nameof(CanAddCustomPartition));
+                OnPropertyChanged(nameof(CanUnmountPartition));
             }
         }
     }
@@ -272,6 +279,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool HasSelection => (SelectedFile != null || SelectedCarvedFile != null || SelectedRecoveryFile != null) && !_isOpeningImage && !_isExportRunning;
 
     public bool HasOpenDatabase => HasLoadedImage && !_isOpeningImage;
+
+    public bool CanAddCustomPartition => _drive != null && !_isOpeningImage && !_isMetadataScanRunning && !_isFileCarverRunning && !_isExportRunning;
+
+    public bool CanUnmountPartition => SelectedPartition != null && !_isOpeningImage && !_isMetadataScanRunning && !_isFileCarverRunning && !_isExportRunning;
 
     private bool HasLoadedImage => Partitions.Count > 0 && (_drive != null || _xboxStorageImage != null || _playStationStorageImage != null || _genericFileSystemImage != null);
 
@@ -344,7 +355,113 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await OpenConsoleImagePathAsync(dialog.ImagePath, dialog.ImageKind, dialog.KeyPath);
     }
 
-    private void LoadDatabase_Click(object sender, RoutedEventArgs e)
+    private async void RecentImagesCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressRecentImageSelection || RecentImagesCombo.SelectedItem is not string path)
+        {
+            return;
+        }
+
+        _suppressRecentImageSelection = true;
+        RecentImagesCombo.SelectedIndex = -1;
+        _suppressRecentImageSelection = false;
+
+        if (!File.Exists(path))
+        {
+            StatusText = "Recent image no longer exists.";
+            AppendLog($"Recent image missing: {path}");
+            RemoveRecentImage(path);
+            return;
+        }
+
+        await OpenConsoleImagePathAsync(path, ConsoleDriveImageKind.Auto, keyPath: null);
+    }
+
+    private void AddCustomPartition_Click(object sender, RoutedEventArgs e)
+    {
+        if (_drive == null)
+        {
+            StatusText = "Custom FATX partitions require an open FATX image.";
+            return;
+        }
+
+        var dialog = new CustomPartitionWindow(_activeRawImagePath ?? _openedImagePath ?? string.Empty)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            _drive.AddPartition(dialog.PartitionName, dialog.PartitionOffset, dialog.PartitionLength);
+            var volume = _drive.Partitions.Last();
+            string status;
+            try
+            {
+                volume.Mount();
+                status = $"Mounted, custom, {volume.GetRoot().Count:N0} root entries";
+            }
+            catch (Exception ex)
+            {
+                status = $"Mount failed: {ex.Message}";
+            }
+
+            var model = new PartitionModel(volume, status);
+            Partitions.Add(model);
+            SelectedPartition = model;
+            AppendLog($"Added custom FATX partition: {dialog.PartitionName}, offset 0x{dialog.PartitionOffset:X}, length 0x{dialog.PartitionLength:X}.");
+            RefreshSelectionState();
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Failed";
+            AppendLog($"Add custom partition failed: {ex.Message}");
+            MessageBox.Show(this, ex.Message, AppName, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void UnmountPartition_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedPartition == null)
+        {
+            return;
+        }
+
+        var partition = SelectedPartition;
+        var index = Partitions.IndexOf(partition);
+        if (index < 0)
+        {
+            return;
+        }
+
+        if (partition.FatxVolume != null && _drive != null)
+        {
+            var driveIndex = _drive.Partitions.FindIndex(volume => ReferenceEquals(volume, partition.FatxVolume));
+            if (driveIndex >= 0)
+            {
+                _drive.RemovePartitionAt(driveIndex);
+            }
+        }
+
+        Partitions.RemoveAt(index);
+        SelectedPartition = Partitions.ElementAtOrDefault(Math.Min(index, Partitions.Count - 1));
+        if (SelectedPartition == null)
+        {
+            DirectoryRoots.Clear();
+            Files.Clear();
+            CurrentFileSystemTitle = "ORIGINAL FILESYSTEM";
+            CurrentDirectorySummary = "No mounted partition selected.";
+        }
+
+        AppendLog($"Unmounted partition from current session: {partition.Name}.");
+        RefreshSelectionState();
+    }
+
+    private async void LoadDatabase_Click(object sender, RoutedEventArgs e)
     {
         if (!HasLoadedImage)
         {
@@ -363,16 +480,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        try
-        {
-            LoadProgressDatabase(dialog.FileName);
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Failed";
-            AppendLog($"Load database failed: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Load Database Failed", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        await LoadProgressDatabaseAsync(dialog.FileName);
     }
 
     private void SaveDatabase_Click(object sender, RoutedEventArgs e)
@@ -521,6 +629,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _recoveryDatabase = null;
             _recoveryIntegrity = null;
             SelectedPartition = Partitions.FirstOrDefault(p => p.IsMounted) ?? Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
             AppendLog($"Opened image: {result.fileName}");
             if (!string.Equals(result.fileName, result.activeRawImagePath, StringComparison.OrdinalIgnoreCase))
             {
@@ -576,6 +685,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _recoveryDatabase = null;
             _recoveryIntegrity = null;
             SelectedPartition = Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
             AppendLog($"Opened Xbox GPT/NTFS image: {result.fileName}");
             if (!string.Equals(result.fileName, result.activeRawImagePath, StringComparison.OrdinalIgnoreCase))
             {
@@ -625,6 +735,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _recoveryDatabase = null;
             _recoveryIntegrity = null;
             SelectedPartition = Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
             AppendLog($"Opened generic filesystem image: {result.fileName}");
             if (!string.Equals(result.fileName, result.activeRawImagePath, StringComparison.OrdinalIgnoreCase))
             {
@@ -637,9 +748,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task<bool> OpenPlayStationImagePathAsync(string imagePath, string keyPath)
     {
-        if (!File.Exists(keyPath))
+        if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
         {
-            StatusText = "Select the required PlayStation HDD key file.";
+            StatusText = "Selected PlayStation key file was not found.";
             return false;
         }
 
@@ -687,6 +798,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _recoveryDatabase = null;
             _recoveryIntegrity = null;
             SelectedPartition = Partitions.FirstOrDefault(p => p.IsMounted) ?? Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
             AppendLog($"Opened PlayStation HDD image: {result.fileName}");
             AppendLog($"Detected PlayStation partitions: {Partitions.Count}");
         },
@@ -696,6 +808,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static bool IsSupportedImagePath(string path)
     {
         return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".zip";
+    }
+
+    private void AddRecentImage(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        _settings.RecentImages.RemoveAll(item => item.Equals(path, StringComparison.OrdinalIgnoreCase));
+        _settings.RecentImages.Insert(0, path);
+        _settings.RecentImages = AppSettings.NormalizeRecentImages(_settings.RecentImages);
+        _settings.Save();
+        RefreshRecentImages();
+    }
+
+    private void RemoveRecentImage(string path)
+    {
+        _settings.RecentImages.RemoveAll(item => item.Equals(path, StringComparison.OrdinalIgnoreCase));
+        _settings.Save();
+        RefreshRecentImages();
+    }
+
+    private void RefreshRecentImages()
+    {
+        RecentImages.Clear();
+        foreach (var path in AppSettings.NormalizeRecentImages(_settings.RecentImages))
+        {
+            RecentImages.Add(path);
+        }
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -1017,6 +1159,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
 
                 var existingDecryptedPath = TryGetExistingPlayStationDecryptedPartition(volume);
+                var hasDecryptedCache = !string.IsNullOrWhiteSpace(existingDecryptedPath);
                 if (!string.IsNullOrWhiteSpace(existingDecryptedPath))
                 {
                     var scanner = new Ps4UfsDirentScanner(existingDecryptedPath, volume.Offset);
@@ -1035,7 +1178,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     Rows = activeRows.Concat(deletedCandidates).ToList(),
                     ActiveCount = activeRows.Count,
                     DeletedCandidateCount = deletedCandidates.Count,
-                    ScannedDeletedCandidates = deletedCandidates.Count > 0 || !string.IsNullOrWhiteSpace(existingDecryptedPath)
+                    ScannedDeletedCandidates = deletedCandidates.Count > 0 || hasDecryptedCache,
+                    DeletedCandidateSkipReason = IsPlayStationUfsDeletedCandidateScanRelevant(volume)
+                        ? "deleted UFS dirent slack scan requires a decrypted partition cache; run File Carver on this partition once to create the temporary cache"
+                        : "deleted UFS dirent slack scan is not applicable to this non-UFS partition"
                 };
             }, cancellationToken);
 
@@ -1049,7 +1195,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 $"{volume.Name} metadata",
                 result.ScannedDeletedCandidates
                     ? $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates"
-                    : $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries; deleted UFS candidates require an existing decrypted partition cache");
+                    : $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries; {result.DeletedCandidateSkipReason}");
             RecoveryTreeRoots.Clear();
             RecoveryRows.Clear();
             if (ClusterViewerPanel.Visibility == Visibility.Visible)
@@ -1064,7 +1210,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             StatusText = _isFileCarverRunning ? "File carver still running..." : "Ready";
             AppendLog(result.ScannedDeletedCandidates
                 ? $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates."
-                : $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries. Deleted UFS candidate scan skipped because no decrypted partition cache exists.");
+                : $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries. {result.DeletedCandidateSkipReason}.");
         }
         catch (OperationCanceledException)
         {
@@ -4228,6 +4374,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         File.WriteAllText(path, JsonSerializer.Serialize(databaseObject, options));
     }
 
+    private async Task LoadProgressDatabaseAsync(string path)
+    {
+        var progressRow = GetOrCreateScanProgressRow("Database load");
+        progressRow.Update(0, "Reading JSON...");
+        IsScanProgressVisible = true;
+        StatusText = "Loading database...";
+        AppendLog($"Loading database: {path}");
+
+        try
+        {
+            var snapshot = await Task.Run(() => LoadDatabaseSnapshotFromFile(path));
+            progressRow.Update(75, "Applying database...");
+            ApplyProgressDatabase(path, snapshot);
+            progressRow.Update(100, "100%");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Failed";
+            progressRow.Update(progressRow.Value, "Failed - database load");
+            AppendLog($"Load database failed: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Load Database Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private DriveDatabaseSnapshot CreateDriveDatabaseSnapshot()
     {
         return new DriveDatabaseSnapshot
@@ -4502,19 +4672,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return snapshot;
     }
 
-    private void LoadProgressDatabase(string path)
+    private static DriveDatabaseSnapshot LoadDatabaseSnapshotFromFile(string path)
     {
-        if (!HasLoadedImage)
-        {
-            throw new InvalidOperationException("Open the matching drive image before loading a database.");
-        }
-
         var json = File.ReadAllText(path);
         var snapshot = JsonSerializer.Deserialize<DriveDatabaseSnapshot>(json)
             ?? throw new InvalidDataException("Database JSON was empty or invalid.");
         if (snapshot.Partitions.Count == 0)
         {
-            throw new InvalidDataException("Database did not contain any partitions.");
+            snapshot = TryConvertLegacyFatxDatabase(json)
+                ?? throw new InvalidDataException("Database did not contain any partitions.");
+        }
+
+        return snapshot;
+    }
+
+    private void LoadProgressDatabase(string path)
+    {
+        ApplyProgressDatabase(path, LoadDatabaseSnapshotFromFile(path));
+    }
+
+    private void ApplyProgressDatabase(string path, DriveDatabaseSnapshot snapshot)
+    {
+        if (!HasLoadedImage)
+        {
+            throw new InvalidOperationException("Open the matching drive image before loading a database.");
         }
 
         var partitionMatches = ValidateDatabaseForCurrentImage(snapshot);
@@ -4544,6 +4725,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     carvedFile.PartitionName = livePartition.Name;
                 }
 
+                NormalizeImportedCarvedFile(carvedFile, livePartition);
                 CarvedFiles.Add(CreateCarvedRowFromSnapshot(carvedFile));
             }
         }
@@ -4560,6 +4742,209 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         LoadSelectedPartition();
         RefreshSelectionState();
+    }
+
+    private static DriveDatabaseSnapshot? TryConvertLegacyFatxDatabase(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("Drive", out var drive) ||
+            !drive.TryGetProperty("Partitions", out var partitionsElement) ||
+            partitionsElement.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var snapshot = new DriveDatabaseSnapshot
+        {
+            Version = 1,
+            Application = "FATXTools legacy",
+            SavedAtUtc = DateTime.UtcNow,
+            SourceImage = GetJsonString(drive, "FileName")
+        };
+
+        foreach (var partitionElement in partitionsElement.EnumerateArray())
+        {
+            var partition = new PartitionDatabaseSnapshot
+            {
+                Name = GetJsonString(partitionElement, "Name"),
+                Offset = GetJsonInt64(partitionElement, "Offset"),
+                Length = GetJsonInt64(partitionElement, "Length"),
+                Family = "FATX",
+                Status = "Loaded from legacy FATXTools database",
+                TotalSpace = GetJsonInt64(partitionElement, "Length")
+            };
+
+            if (partitionElement.TryGetProperty("Analysis", out var analysis))
+            {
+                if (analysis.TryGetProperty("MetadataAnalyzer", out var metadata) &&
+                    metadata.ValueKind == JsonValueKind.Array)
+                {
+                    partition.Analysis.MetadataAnalyzer = metadata
+                        .EnumerateArray()
+                        .Select(entry => ConvertLegacyDirectoryEntry(entry, partition.Name))
+                        .Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+                        .ToList();
+                }
+
+                if (analysis.TryGetProperty("FileCarver", out var carver) &&
+                    carver.ValueKind == JsonValueKind.Array)
+                {
+                    partition.Analysis.FileCarver = carver
+                        .EnumerateArray()
+                        .Select(entry => new CarvedFileSnapshot
+                        {
+                            Name = GetJsonString(entry, "Name"),
+                            Kind = GetLegacyCarvedKind(entry),
+                            Offset = partition.Offset + GetJsonInt64(entry, "Offset"),
+                            SourceOffset = GetJsonInt64(entry, "Offset"),
+                            Size = GetJsonInt64(entry, "Size"),
+                            PartitionName = partition.Name,
+                            Source = "Legacy FATXTools database",
+                            Detail = $"Imported legacy FATXTools file-carver row; legacy FATX file-area offset 0x{GetJsonInt64(entry, "Offset"):X}"
+                        })
+                        .ToList();
+                }
+            }
+
+            snapshot.Partitions.Add(partition);
+        }
+
+        return snapshot.Partitions.Count > 0 ? snapshot : null;
+    }
+
+    private static SnapshotFileEntry ConvertLegacyDirectoryEntry(JsonElement entry, string partitionName, string parentPath = "")
+    {
+        var name = GetJsonString(entry, "FileName");
+        var attributes = GetJsonInt32(entry, "FileAttributes");
+        var isDirectory = (attributes & 0x10) != 0;
+        var path = string.IsNullOrWhiteSpace(parentPath)
+            ? name
+            : $"{parentPath}/{name}";
+        var snapshot = new SnapshotFileEntry
+        {
+            Name = name,
+            Path = path,
+            PartitionName = partitionName,
+            Kind = isDirectory ? "Folder" : "File",
+            IsDirectory = isDirectory,
+            Size = isDirectory ? -1 : GetJsonInt64(entry, "FileSize"),
+            Offset = GetJsonInt64(entry, "Offset"),
+            Cluster = (uint)Math.Clamp(GetJsonInt64(entry, "Cluster"), 0, uint.MaxValue),
+            FirstCluster = (uint)Math.Clamp(GetJsonInt64(entry, "FirstCluster"), 0, uint.MaxValue),
+            IsDeleted = true,
+            Attributes = $"0x{attributes:X2}",
+            Created = ReadLegacyFatxTimestamp(entry, "CreationTime"),
+            Modified = ReadLegacyFatxTimestamp(entry, "LastWriteTime"),
+            Accessed = ReadLegacyFatxTimestamp(entry, "LastAccessTime"),
+            MetadataStatus = "Imported legacy FATXTools metadata",
+            Fragmentation = "Legacy FATXTools metadata",
+            Extents = FormatLegacyClusters(entry)
+        };
+
+        if (entry.TryGetProperty("Children", out var children) && children.ValueKind == JsonValueKind.Array)
+        {
+            snapshot.Children = children
+                .EnumerateArray()
+                .Select(child => ConvertLegacyDirectoryEntry(child, partitionName, path))
+                .Where(child => !string.IsNullOrWhiteSpace(child.Name))
+                .ToList();
+        }
+
+        return snapshot;
+    }
+
+    private static void NormalizeImportedCarvedFile(CarvedFileSnapshot carvedFile, PartitionModel livePartition)
+    {
+        if (!carvedFile.Source.Equals("Legacy FATXTools database", StringComparison.OrdinalIgnoreCase)
+            || carvedFile.SourceOffset < 0)
+        {
+            return;
+        }
+
+        var relativeOffset = carvedFile.SourceOffset;
+        var absoluteOffset = livePartition.FatxVolume != null
+            ? livePartition.FatxVolume.Offset + livePartition.FatxVolume.FileAreaByteOffset + relativeOffset
+            : livePartition.Offset + relativeOffset;
+
+        carvedFile.Offset = absoluteOffset;
+        carvedFile.SourceOffset = absoluteOffset;
+    }
+
+    private static string GetLegacyCarvedKind(JsonElement entry)
+    {
+        var extension = Path.GetExtension(GetJsonString(entry, "Name")).TrimStart('.');
+        return string.IsNullOrWhiteSpace(extension)
+            ? "File"
+            : extension.ToUpperInvariant();
+    }
+
+    private static string FormatLegacyClusters(JsonElement entry)
+    {
+        if (!entry.TryGetProperty("Clusters", out var clustersElement) ||
+            clustersElement.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        var clusters = new List<uint>();
+        foreach (var cluster in clustersElement.EnumerateArray())
+        {
+            if (cluster.ValueKind == JsonValueKind.Number && cluster.TryGetUInt32(out var value))
+            {
+                clusters.Add(value);
+            }
+        }
+
+        return ClusterChainMetrics.FormatRanges(clusters, maxRanges: 8);
+    }
+
+    private static DateTime ReadLegacyFatxTimestamp(JsonElement entry, string propertyName)
+    {
+        if (!entry.TryGetProperty(propertyName, out var value))
+        {
+            return default;
+        }
+
+        uint raw;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetUInt32(out var number))
+        {
+            raw = number;
+        }
+        else if (!uint.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out raw))
+        {
+            return default;
+        }
+
+        return new X360TimeStamp(raw).AsDateTime();
+    }
+
+    private static string GetJsonString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.Null
+            ? value.ToString()
+            : string.Empty;
+    }
+
+    private static long GetJsonInt64(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            return 0;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+
+        return long.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0;
+    }
+
+    private static int GetJsonInt32(JsonElement element, string propertyName)
+    {
+        return (int)Math.Clamp(GetJsonInt64(element, propertyName), int.MinValue, int.MaxValue);
     }
 
     private string GetCarvedSourcePath(CarvedFileRow row)
@@ -4615,11 +5000,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private List<(PartitionModel LivePartition, PartitionDatabaseSnapshot DatabasePartition)> ValidateDatabaseForCurrentImage(DriveDatabaseSnapshot snapshot)
     {
-        if (snapshot.Partitions.Count != Partitions.Count)
-        {
-            throw new InvalidDataException($"Database partition count ({snapshot.Partitions.Count}) does not match the open image ({Partitions.Count}).");
-        }
-
         var unmatchedLivePartitions = Partitions.ToList();
         var matches = new List<(PartitionModel LivePartition, PartitionDatabaseSnapshot DatabasePartition)>();
         var mismatches = new List<string>();
@@ -4642,6 +5022,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var detail = string.Join(Environment.NewLine, mismatches.Take(8));
             var suffix = mismatches.Count > 8 ? $"{Environment.NewLine}+{mismatches.Count - 8:N0} more mismatch(es)" : string.Empty;
             throw new InvalidDataException($"Database does not match the currently open image. Unmatched database partition(s):{Environment.NewLine}{detail}{suffix}");
+        }
+
+        if (matches.Count == 0)
+        {
+            throw new InvalidDataException("Database did not match any partition in the currently open image.");
         }
 
         var sourceFileName = Path.GetFileName(snapshot.SourceImage);
@@ -4667,7 +5052,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static string NormalizePartitionFamily(string value)
     {
-        return value.Trim();
+        var normalized = value.Trim();
+        return normalized.Contains("FATX", StringComparison.OrdinalIgnoreCase)
+            ? "FATX"
+            : normalized;
     }
 
     private static void StampSnapshotPartition(IEnumerable<SnapshotFileEntry> entries, string partitionName)
@@ -5004,6 +5392,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return _temporaryScanFiles.FirstOrDefault(path =>
             Path.GetFileName(path).Contains(SanitizeFileName(volume.Name), StringComparison.OrdinalIgnoreCase) &&
             File.Exists(path));
+    }
+
+    private static bool IsPlayStationUfsDeletedCandidateScanRelevant(PlayStationVolume volume)
+    {
+        return volume.Name.Equals("user", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("eap_user", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ClearTemporaryScanFiles()

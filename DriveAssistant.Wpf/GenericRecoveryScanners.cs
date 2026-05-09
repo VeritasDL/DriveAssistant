@@ -29,6 +29,10 @@ public sealed class GenericFileCarver
 {
     private const int HeaderBufferSize = 0x300;
     private const int ScanChunkSize = 0x4000000;
+    private const long Ps4PkgFirstFragmentOffset = 0x28000000L;
+    private const long Ps4PkgFragmentStride = 0x28000000L;
+    private const long Ps4PkgNormalFragmentLength = 0x6400000L;
+    private const int Ps4PkgMaxPredictedFragments = 128;
     private readonly string _sourcePath;
     private readonly long _scanStart;
     private readonly long _scanLength;
@@ -158,6 +162,12 @@ public sealed class GenericFileCarver
             return;
         }
 
+        if (outerMatch.Extension.Equals(".pkg", StringComparison.OrdinalIgnoreCase)
+            || outerMatch.Extension.Equals(".dpkg", StringComparison.OrdinalIgnoreCase))
+        {
+            AddPs4PkgFragmentRows(rows, outerFile, cancellationToken);
+        }
+
         if (!outerMatch.Extension.Equals(".xvd", StringComparison.OrdinalIgnoreCase)
             && !outerMatch.Extension.Equals(".xvc", StringComparison.OrdinalIgnoreCase))
         {
@@ -175,6 +185,41 @@ public sealed class GenericFileCarver
             $"{_sourceName} > {outerFile.Name}",
             cancellationToken);
         rows.AddRange(nestedRows);
+    }
+
+    private static void AddPs4PkgFragmentRows(List<GenericCarvedFile> rows, GenericCarvedFile packageFile, CancellationToken cancellationToken)
+    {
+        if (packageFile.Size <= Ps4PkgFirstFragmentOffset)
+        {
+            return;
+        }
+
+        var packageBaseName = Path.GetFileNameWithoutExtension(packageFile.Name);
+        var fragments = 0;
+        for (var fragmentOffset = Ps4PkgFirstFragmentOffset;
+             fragmentOffset < packageFile.Size && fragments < Ps4PkgMaxPredictedFragments;
+             fragmentOffset += Ps4PkgFragmentStride)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var remaining = packageFile.Size - fragmentOffset;
+            var fragmentSize = Math.Min(Ps4PkgNormalFragmentLength, remaining);
+            if (fragmentSize <= 0)
+            {
+                break;
+            }
+
+            rows.Add(new GenericCarvedFile(
+                $"{packageBaseName}_fragment_{fragments + 1:D3}_{fragmentOffset:X16}.pkgfrag",
+                "PKGFRAG",
+                packageFile.SourcePath,
+                packageFile.SourceOffset + fragmentOffset,
+                packageFile.DisplayOffset + fragmentOffset,
+                fragmentSize,
+                $"{packageFile.Source} > {packageFile.Name}",
+                $"Predicted PS4 PKG fragment window #{fragments + 1}; package offset 0x{fragmentOffset:X}; normal span 0x{Ps4PkgNormalFragmentLength:X}; old Ubisoft kit exceptions reported at 0x8000 and 0xBA0000. If the next visible fragment appears at the next 0x{Ps4PkgFragmentStride:X} boundary, this window may have been overwritten."));
+            fragments++;
+        }
     }
 
     private static IReadOnlyList<GenericCarvedFile> FindNestedFileSystems(
@@ -345,7 +390,13 @@ public sealed class GenericFileCarver
         if (StartsWith(header, "\x7F"u8) && header.Length >= 4 && header[1] == (byte)'C' && header[2] == (byte)'N' && header[3] == (byte)'T')
         {
             var size = TryGetPs4PkgSize(header, remainingLength);
-            return new GenericCarverMatch(string.Empty, ".pkg", size > 0 ? size : EstimateUnknownSize(remainingLength), "PS4 package (PKG)");
+            var packageType = header.Length >= 8 ? ReadUInt32BigEndian(header[4..]) : 0;
+            var isDebugPackage = packageType == 1;
+            var extension = isDebugPackage ? ".dpkg" : ".pkg";
+            var detail = isDebugPackage
+                ? "PS4 debug package (DPKG, CNT header)"
+                : $"PS4 package (PKG, CNT header, type 0x{packageType:X8})";
+            return new GenericCarverMatch(string.Empty, extension, size > 0 ? size : EstimateUnknownSize(remainingLength), detail);
         }
 
         if (StartsWith(header, "PFSC"u8))

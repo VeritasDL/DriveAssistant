@@ -189,6 +189,10 @@ std::string wideToUtf8(const wchar_t* value)
 
 std::vector<char> readAllBytes(const std::string& path)
 {
+  if (path.empty()) {
+    return {};
+  }
+
   std::ifstream file(path, std::ios::binary);
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open key file: " + path);
@@ -215,12 +219,14 @@ std::unique_ptr<disk::Disk> openDisk(const std::string& imagePath, const std::st
   auto imagePathCopy = imagePath;
 
   disk::DiskConfig config;
-  config.setKeys(keyData.data(), static_cast<uint32_t>(keyData.size()));
+  if (!keyData.empty()) {
+    config.setKeys(keyData.data(), static_cast<uint32_t>(keyData.size()));
+  }
   config.setStream(io::stream::DiskStreamFactory::getStream(imagePathCopy));
 
   disk::Disk* rawDisk = formats::DiskFormatFactory::getInstance()->detectFormat(&config);
   if (!rawDisk) {
-    throw std::runtime_error("Could not detect PlayStation disk format. Check the HDD image and key file.");
+    throw std::runtime_error("Could not detect PlayStation disk format. Check the HDD image and optional key file.");
   }
 
   if (rawDisk->getPartitions().empty()) {
@@ -239,12 +245,14 @@ std::unique_ptr<disk::Disk> openDiskFromStream(
   auto keyData = readAllBytes(keyPath);
 
   disk::DiskConfig config;
-  config.setKeys(keyData.data(), static_cast<uint32_t>(keyData.size()));
+  if (!keyData.empty()) {
+    config.setKeys(keyData.data(), static_cast<uint32_t>(keyData.size()));
+  }
   config.setStream(stream);
 
   disk::Disk* rawDisk = formats::DiskFormatFactory::getInstance()->detectFormat(&config);
   if (!rawDisk) {
-    throw std::runtime_error("Could not detect PlayStation disk format from virtual image stream. Check the HDD image and key file: " + label);
+    throw std::runtime_error("Could not detect PlayStation disk format from virtual image stream. Check the HDD image and optional key file: " + label);
   }
 
   if (rawDisk->getPartitions().empty()) {
@@ -1732,8 +1740,8 @@ int runBridge(
   try {
     const auto image = wideToUtf8(imagePath);
     const auto key = wideToUtf8(keyPath);
-    if (image.empty() || key.empty()) {
-      return copyString("Image path and key path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty()) {
+      return copyString("Image path is required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1794,8 +1802,8 @@ PSHDD_API int pshdd_list_files_json(
     const auto image = wideToUtf8(imagePath);
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
-    if (image.empty() || key.empty() || partition.empty()) {
-      return copyString("Image path, key path, and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty()) {
+      return copyString("Image path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1826,8 +1834,8 @@ PSHDD_API int pshdd_decrypt_partition(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputPath);
-    if (image.empty() || key.empty() || partition.empty() || destination.empty()) {
-      return copyString("Image path, key path, partition name, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty() || destination.empty()) {
+      return copyString("Image path, partition name, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1860,8 +1868,8 @@ PSHDD_API int pshdd_export_file(
     const auto partition = wideToUtf8(partitionName);
     const auto source = wideToUtf8(filePath);
     const auto destination = wideToUtf8(outputPath);
-    if (image.empty() || key.empty() || partition.empty() || source.empty() || destination.empty()) {
-      return copyString("Image path, key path, partition name, file path, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty() || source.empty() || destination.empty()) {
+      return copyString("Image path, partition name, file path, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1892,8 +1900,8 @@ PSHDD_API int pshdd_recover_files_json(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputDirectory);
-    if (image.empty() || key.empty() || partition.empty() || destination.empty()) {
-      return copyString("Image path, key path, partition name, and output directory are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty() || destination.empty()) {
+      return copyString("Image path, partition name, and output directory are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1922,8 +1930,8 @@ PSHDD_API int pshdd_list_deleted_inodes_json(
     const auto image = wideToUtf8(imagePath);
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
-    if (image.empty() || key.empty() || partition.empty()) {
-      return copyString("Image path, key path, and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty()) {
+      return copyString("Image path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1955,8 +1963,8 @@ PSHDD_API int pshdd_export_deleted_inode(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputPath);
-    if (image.empty() || key.empty() || partition.empty() || inodeNumber == 0 || destination.empty()) {
-      return copyString("Image path, key path, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (image.empty() || partition.empty() || inodeNumber == 0 || destination.empty()) {
+      return copyString("Image path, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -1986,8 +1994,8 @@ PSHDD_API int pshdd_list_partitions_virtual(
   try {
     const auto label = wideToUtf8(imageLabel);
     const auto key = wideToUtf8(keyPath);
-    if (key.empty()) {
-      return copyString("Key path is required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback) {
+      return copyString("Virtual image callbacks are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2024,8 +2032,8 @@ PSHDD_API int pshdd_display_partition_virtual(
     const auto label = wideToUtf8(imageLabel);
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
-    if (key.empty() || partition.empty()) {
-      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty()) {
+      return copyString("Virtual image callbacks and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2059,8 +2067,8 @@ PSHDD_API int pshdd_list_files_json_virtual(
     const auto label = wideToUtf8(imageLabel);
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
-    if (key.empty() || partition.empty()) {
-      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty()) {
+      return copyString("Virtual image callbacks and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2096,8 +2104,8 @@ PSHDD_API int pshdd_decrypt_partition_virtual(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputPath);
-    if (key.empty() || partition.empty() || destination.empty()) {
-      return copyString("Key path, partition name, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty() || destination.empty()) {
+      return copyString("Virtual image callbacks, partition name, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2135,8 +2143,8 @@ PSHDD_API int pshdd_export_file_virtual(
     const auto partition = wideToUtf8(partitionName);
     const auto source = wideToUtf8(filePath);
     const auto destination = wideToUtf8(outputPath);
-    if (key.empty() || partition.empty() || source.empty() || destination.empty()) {
-      return copyString("Key path, partition name, file path, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty() || source.empty() || destination.empty()) {
+      return copyString("Virtual image callbacks, partition name, file path, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2172,8 +2180,8 @@ PSHDD_API int pshdd_recover_files_json_virtual(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputDirectory);
-    if (key.empty() || partition.empty() || destination.empty()) {
-      return copyString("Key path, partition name, and output directory are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty() || destination.empty()) {
+      return copyString("Virtual image callbacks, partition name, and output directory are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2207,8 +2215,8 @@ PSHDD_API int pshdd_list_deleted_inodes_json_virtual(
     const auto label = wideToUtf8(imageLabel);
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
-    if (key.empty() || partition.empty()) {
-      return copyString("Key path and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty()) {
+      return copyString("Virtual image callbacks and partition name are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }
@@ -2245,8 +2253,8 @@ PSHDD_API int pshdd_export_deleted_inode_virtual(
     const auto key = wideToUtf8(keyPath);
     const auto partition = wideToUtf8(partitionName);
     const auto destination = wideToUtf8(outputPath);
-    if (key.empty() || partition.empty() || inodeNumber == 0 || destination.empty()) {
-      return copyString("Key path, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
+    if (!readCallback || !lengthCallback || partition.empty() || inodeNumber == 0 || destination.empty()) {
+      return copyString("Virtual image callbacks, partition name, inode number, and output path are required.", output, outputLength, requiredBytes) == kBufferTooSmall
         ? kBufferTooSmall
         : kInvalidArgument;
     }

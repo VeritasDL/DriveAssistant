@@ -418,6 +418,11 @@ public sealed class GenericFileSystemImageTests
         Encoding.ASCII.GetBytes("CNT").CopyTo(image.AsSpan(0x1001));
         BinaryPrimitives.WriteUInt64BigEndian(image.AsSpan(0x1018), 0x2000);
 
+        image[0x3000] = 0x7F;
+        Encoding.ASCII.GetBytes("CNT").CopyTo(image.AsSpan(0x3001));
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x3004), 0x00000001);
+        BinaryPrimitives.WriteUInt64BigEndian(image.AsSpan(0x3018), 0x1000);
+
         using var temp = new TempFile(image);
         var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "ps4 test");
         var rows = carver.Analyze(CancellationToken.None, null);
@@ -429,6 +434,122 @@ public sealed class GenericFileSystemImageTests
         var pkg = Assert.Single(rows, row => row.Kind == "PKG");
         Assert.Equal(0x2000, pkg.Size);
         Assert.Contains("PS4 package", pkg.Detail);
+
+        var dpkg = Assert.Single(rows, row => row.Kind == "DPKG");
+        Assert.Equal(0x1000, dpkg.Size);
+        Assert.Contains("PS4 debug package", dpkg.Detail);
+    }
+
+    [Fact]
+    public void GenericCarver_AddsPredictedPs4PkgFragmentWindows()
+    {
+        var addFragments = typeof(GenericFileCarver).GetMethod("AddPs4PkgFragmentRows", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var rows = new System.Collections.Generic.List<GenericCarvedFile>();
+        var package = new GenericCarvedFile(
+            "carved_0000000000000000.pkg",
+            "PKG",
+            "image.img",
+            0x1000,
+            0x2000,
+            0x56400000,
+            "ps4 image",
+            "PS4 package");
+
+        addFragments.Invoke(null, [rows, package, CancellationToken.None]);
+
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, row => Assert.Equal("PKGFRAG", row.Kind));
+        Assert.Equal(0x28001000, rows[0].SourceOffset);
+        Assert.Equal(0x28002000, rows[0].DisplayOffset);
+        Assert.Equal(0x6400000, rows[0].Size);
+        Assert.Equal(0x50001000, rows[1].SourceOffset);
+        Assert.Contains("Ubisoft", rows[0].Detail);
+    }
+
+    [Fact]
+    public void LegacyFatxToolsJson_ImportsMetadataClustersAndCarverOffsets()
+    {
+        var timestamp = PackFatTimestamp(2024, 5, 8, 17, 40, 14);
+        var json = $$"""
+            {
+              "Version": 1,
+              "Drive": {
+                "FileName": "legacy.img",
+                "Partitions": [
+                  {
+                    "Name": "Data",
+                    "Offset": 4096,
+                    "Length": 1048576,
+                    "Analysis": {
+                      "MetadataAnalyzer": [
+                        {
+                          "Cluster": 2,
+                          "Offset": 8192,
+                          "FileNameLength": 3,
+                          "FileAttributes": 16,
+                          "FileName": "DIR",
+                          "FileNameBytes": "RElS",
+                          "FirstCluster": 2,
+                          "FileSize": 0,
+                          "CreationTime": {{timestamp}},
+                          "LastWriteTime": {{timestamp}},
+                          "LastAccessTime": {{timestamp}},
+                          "Children": [
+                            {
+                              "Cluster": 3,
+                              "Offset": 8256,
+                              "FileNameLength": 8,
+                              "FileAttributes": 32,
+                              "FileName": "FILE.BIN",
+                              "FileNameBytes": "RklMRS5CSU4=",
+                              "FirstCluster": 3,
+                              "FileSize": 512,
+                              "CreationTime": {{timestamp}},
+                              "LastWriteTime": {{timestamp}},
+                              "LastAccessTime": {{timestamp}},
+                              "Clusters": [3, 4, 7]
+                            }
+                          ],
+                          "Clusters": [2]
+                        }
+                      ],
+                      "FileCarver": [
+                        {
+                          "Offset": 4660,
+                          "Name": "found.xex",
+                          "Size": 1024
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+            """;
+
+        using var temp = new TempFile(Encoding.UTF8.GetBytes(json));
+        var load = typeof(MainWindow).GetMethod("LoadDatabaseSnapshotFromFile", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var snapshot = Assert.IsType<DriveDatabaseSnapshot>(load.Invoke(null, [temp.Path]));
+
+        var partition = Assert.Single(snapshot.Partitions);
+        Assert.Equal("FATX", partition.Family);
+        Assert.Equal(4096, partition.Offset);
+
+        var root = Assert.Single(partition.Analysis.MetadataAnalyzer);
+        Assert.Equal("DIR", root.Name);
+        Assert.Equal("DIR", root.Path);
+        Assert.Equal(2024, root.Created.Year);
+
+        var child = Assert.Single(root.Children);
+        Assert.Equal("DIR/FILE.BIN", child.Path);
+        Assert.Equal("3-4, 7", child.Extents);
+        Assert.Equal(512, child.Size);
+
+        var carved = Assert.Single(partition.Analysis.FileCarver);
+        Assert.Equal("found.xex", carved.Name);
+        Assert.Equal("XEX", carved.Kind);
+        Assert.Equal(0x1234, carved.SourceOffset);
+        Assert.Contains("file-area offset 0x1234", carved.Detail);
     }
 
     [Fact]
@@ -780,6 +901,16 @@ public sealed class GenericFileSystemImageTests
     private static int AlignUp(int value, int alignment)
     {
         return value == 0 ? alignment : ((value + alignment - 1) / alignment) * alignment;
+    }
+
+    private static uint PackFatTimestamp(int year, int month, int day, int hour, int minute, int second)
+    {
+        return (uint)(((year - 1980) << 25)
+                      | (month << 21)
+                      | (day << 16)
+                      | (hour << 11)
+                      | (minute << 5)
+                      | (second / 2));
     }
 
     private static T GetProperty<T>(object instance, string name)

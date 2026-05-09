@@ -163,14 +163,22 @@ namespace FATXTools.Database
             if (dirent.IsDirectory())
             {
                 // NOTE: Directories with more than one 256 files would have multiple clusters
-                return new List<uint>() { dirent.FirstCluster };
+                return dirent.FirstCluster < this.volume.MaxClusters
+                    ? new List<uint>() { dirent.FirstCluster }
+                    : new List<uint>();
             }
             else
             {
                 var clusterCount = (int)(((dirent.FileSize + (this.volume.BytesPerCluster - 1)) &
                          ~(this.volume.BytesPerCluster - 1)) / this.volume.BytesPerCluster);
 
-                return Enumerable.Range((int)dirent.FirstCluster, clusterCount).Select(i => (uint)i).ToList();
+                if (dirent.FirstCluster >= this.volume.MaxClusters || clusterCount <= 0)
+                {
+                    return new List<uint>();
+                }
+
+                var available = (int)Math.Min((uint)clusterCount, this.volume.MaxClusters - dirent.FirstCluster);
+                return Enumerable.Range((int)dirent.FirstCluster, available).Select(i => (uint)i).ToList();
             }
         }
 

@@ -26,7 +26,7 @@ public partial class PlayStationMountWindow : Window, INotifyPropertyChanged
 
     private PlayStationPartitionRow? _selectedPartition;
     private PlayStationFileRow? _selectedFile;
-    private string _statusText = "Choose a PS3/PS4 HDD image and key file. Native bridge is used when available.";
+    private string _statusText = "Choose a PS3/PS4 HDD image. Key files are optional for already-decrypted images.";
     private bool _isBridgeProgressVisible;
     private bool _isBridgeProgressIndeterminate;
     private double _bridgeProgressValue;
@@ -44,8 +44,8 @@ public partial class PlayStationMountWindow : Window, INotifyPropertyChanged
         }
 
         StatusText = PlayStationNativeBridge.IsAvailable
-            ? "Native PS HDD bridge loaded. Choose an image and key file."
-            : "Native PS HDD bridge unavailable. Choose an image, key file, and mount-tool.exe fallback.";
+            ? "Native PS HDD bridge loaded. Choose an image; add a key only for encrypted images."
+            : "Native PS HDD bridge unavailable. Choose an image and mount-tool.exe fallback; add a key only for encrypted images.";
         PlayStationNativeBridge.ProgressChanged += OnBridgeProgressChanged;
         Closed += (_, _) => PlayStationNativeBridge.ProgressChanged -= OnBridgeProgressChanged;
     }
@@ -435,9 +435,10 @@ public partial class PlayStationMountWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        if (!File.Exists(KeyPathTextBox.Text.Trim()))
+        var keyPath = KeyPathTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
         {
-            StatusText = "Select the required PS3 EID root key or PS4 EAP HDD key file.";
+            StatusText = "Selected PlayStation key file was not found.";
             return false;
         }
 

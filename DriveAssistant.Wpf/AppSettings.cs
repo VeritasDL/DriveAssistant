@@ -1,5 +1,6 @@
 using FATX.Analyzers;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -41,6 +42,8 @@ public sealed class AppSettings
 
     public string Theme { get; set; } = WpfTheme.Dark;
 
+    public List<string> RecentImages { get; set; } = [];
+
     public static AppSettings Load()
     {
         try
@@ -52,6 +55,7 @@ public sealed class AppSettings
 
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new AppSettings();
             settings.CustomCarversFile = NormalizeCustomCarversFile(settings.CustomCarversFile);
+            settings.RecentImages = NormalizeRecentImages(settings.RecentImages);
             return settings;
         }
         catch
@@ -79,7 +83,8 @@ public sealed class AppSettings
             EnableFileLogging = EnableFileLogging,
             CustomCarversFile = NormalizeCustomCarversFile(CustomCarversFile),
             PlayStationMountToolPath = PlayStationMountToolPath,
-            Theme = WpfTheme.NormalizeName(Theme)
+            Theme = WpfTheme.NormalizeName(Theme),
+            RecentImages = NormalizeRecentImages(RecentImages)
         };
     }
 
@@ -94,5 +99,35 @@ public sealed class AppSettings
         return Path.IsPathRooted(path)
             ? path
             : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
+    }
+
+    public static List<string> NormalizeRecentImages(IEnumerable<string>? paths)
+    {
+        var rows = new List<string>();
+        if (paths == null)
+        {
+            return rows;
+        }
+
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            var trimmed = path.Trim();
+            if (!rows.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+            {
+                rows.Add(trimmed);
+            }
+
+            if (rows.Count >= 12)
+            {
+                break;
+            }
+        }
+
+        return rows;
     }
 }

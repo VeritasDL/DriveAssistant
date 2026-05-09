@@ -58,6 +58,13 @@ namespace FATX.Analyzers.Signatures
             set => _offset = value;
         }
 
+        protected long RemainingLength => Math.Max(0, _volume.FileAreaLength - _offset);
+
+        protected bool CanReadRelative(long offset, long count = 1)
+        {
+            return offset >= 0 && count >= 0 && offset <= RemainingLength - count;
+        }
+
         protected void Seek(long offset, SeekOrigin origin = SeekOrigin.Begin)
         {
             offset += this._offset;

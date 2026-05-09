@@ -16,7 +16,7 @@ public partial class ConsoleImageOpenWindow : Window
         new("Xbox / Xbox 360 FATX", ConsoleDriveImageKind.XboxFatx, false),
         new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false),
         new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
-        new("PlayStation 3 / PlayStation 4 HDD", ConsoleDriveImageKind.PlayStationHdd, true)
+        new("PlayStation 3 / PlayStation 4 HDD", ConsoleDriveImageKind.PlayStationHdd, false)
     ];
 
     public ConsoleImageOpenWindow(string? imagePath = null, ConsoleDriveImageKind initialKind = ConsoleDriveImageKind.Auto)
@@ -87,9 +87,9 @@ public partial class ConsoleImageOpenWindow : Window
             return;
         }
 
-        if (RequiresKey(ImageKind) && !File.Exists(KeyPath))
+        if (!string.IsNullOrWhiteSpace(KeyPath) && !File.Exists(KeyPath))
         {
-            StatusTextBlock.Text = "Select the required PlayStation HDD key file.";
+            StatusTextBlock.Text = "Selected key file does not exist.";
             return;
         }
 
@@ -120,7 +120,7 @@ public partial class ConsoleImageOpenWindow : Window
 
         if (RequiresKey(ImageKind))
         {
-            StatusTextBlock.Text = "PlayStation HDD images require the matching PS3 EID root key or PS4 EAP HDD key.";
+            StatusTextBlock.Text = "PlayStation keys are optional. Leave blank for already-decrypted PS3/PS4 images, or select the matching PS3 EID root key / PS4 EAP HDD key for encrypted images.";
             return;
         }
 

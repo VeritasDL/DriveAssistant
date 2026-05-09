@@ -26,14 +26,14 @@ internal static class ManagedPs4StorageImage
 
         try
         {
-            if (!File.Exists(imagePath) || !File.Exists(keyPath))
+            if (!File.Exists(imagePath))
             {
-                error = "Image or key file does not exist.";
+                error = "Image file does not exist.";
                 return false;
             }
 
-            var key = File.ReadAllBytes(keyPath);
-            if (key.Length < 0x20)
+            var key = File.Exists(keyPath) ? File.ReadAllBytes(keyPath) : [];
+            if (key.Length > 0 && key.Length < 0x20)
             {
                 error = "PS4 EAP HDD keys must contain at least 32 bytes.";
                 return false;
@@ -371,9 +371,9 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
     private EncryptedPs4PartitionReader OpenReader(string imagePath, string partitionName)
     {
         var partition = GetPartition(partitionName);
-        var candidates = new[] { partition.IvOffsetSectors, 0UL }
-            .Distinct()
-            .ToArray();
+        var candidates = _key.Length >= 0x20
+            ? new[] { partition.IvOffsetSectors, 0UL }.Distinct().ToArray()
+            : [0UL];
 
         foreach (var sectorBase in candidates)
         {
@@ -550,7 +550,8 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
     private const int SectorSize = 512;
     private readonly FileStream _stream;
     private readonly ManagedPs4Partition _partition;
-    private readonly AesXtsDecryptor _decryptor;
+    private readonly AesXtsDecryptor? _decryptor;
+    private readonly bool _isPlaintext;
 
     private readonly ulong _sectorBase;
 
@@ -559,7 +560,8 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
         _stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
         _partition = partition;
         _sectorBase = sectorBase;
-        _decryptor = new AesXtsDecryptor(key.AsSpan(0, 16).ToArray(), key.AsSpan(16, 16).ToArray());
+        _isPlaintext = key.Length < 0x20;
+        _decryptor = _isPlaintext ? null : new AesXtsDecryptor(key.AsSpan(0, 16).ToArray(), key.AsSpan(16, 16).ToArray());
     }
 
     public ulong Length => _partition.Length;
@@ -581,15 +583,18 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
             throw new EndOfStreamException("Could not read encrypted PS4 partition data.");
         }
 
-        for (var blockOffset = 0; blockOffset < buffer.Length; blockOffset += SectorSize)
+        if (!_isPlaintext)
         {
-            if (BinaryPrimitives.ReadUInt64LittleEndian(buffer.AsSpan(blockOffset, 8)) == 0)
+            for (var blockOffset = 0; blockOffset < buffer.Length; blockOffset += SectorSize)
             {
-                continue;
-            }
+                if (BinaryPrimitives.ReadUInt64LittleEndian(buffer.AsSpan(blockOffset, 8)) == 0)
+                {
+                    continue;
+                }
 
-            var sector = _sectorBase + (ulong)((alignedOffset + blockOffset) / SectorSize);
-            _decryptor.DecryptSector(buffer.AsSpan(blockOffset, SectorSize), sector);
+                var sector = _sectorBase + (ulong)((alignedOffset + blockOffset) / SectorSize);
+                _decryptor!.DecryptSector(buffer.AsSpan(blockOffset, SectorSize), sector);
+            }
         }
 
         buffer.AsSpan(prefix, destination.Length).CopyTo(destination);
@@ -604,7 +609,7 @@ internal sealed class EncryptedPs4PartitionReader : IDisposable
 
     public void Dispose()
     {
-        _decryptor.Dispose();
+        _decryptor?.Dispose();
         _stream.Dispose();
     }
 

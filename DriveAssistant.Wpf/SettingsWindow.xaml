@@ -4,9 +4,9 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Settings"
         Width="620"
-        Height="560"
+        Height="640"
         MinWidth="580"
-        MinHeight="540"
+        MinHeight="610"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
         WindowStyle="None">
