@@ -225,6 +225,17 @@
                             <TextBlock x:Name="ClusterViewerToggleText" Text="Cluster Viewer" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="ToggleResultsWindowButton"
+                            Style="{StaticResource SecondaryButton}"
+                            MinWidth="124"
+                            Margin="5,3"
+                            ToolTip="Move Recovery View and Carved Files into a resizable window"
+                            Click="ToggleResultsWindow_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
+                            <TextBlock x:Name="ToggleResultsWindowText" Text="Pop Out Results" />
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
 
                 <Grid Grid.Column="2" VerticalAlignment="Center">
@@ -236,8 +247,13 @@
                             BorderBrush="{DynamicResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="6"
-                            Height="40"
-                            ToolTip="Searches visible filesystem, recovery results, and carved file result names. Press Enter or Find.">
+                            Height="40">
+                        <Border.ToolTip>
+                            <ToolTip MaxWidth="360">
+                                <TextBlock Text="Searches visible filesystem, recovery results, and carved file result names. Press Enter or Find."
+                                           TextWrapping="Wrap" />
+                            </ToolTip>
+                        </Border.ToolTip>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="38" />
@@ -290,13 +306,13 @@
                     CornerRadius="6">
                 <Grid>
                     <Border Width="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left" CornerRadius="6,0,0,6" />
-                    <Grid Margin="20,18,16,16">
+                    <Grid Margin="16,16,12,14">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Grid Margin="0,0,0,14">
+                        <Grid Margin="0,0,0,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -330,22 +346,28 @@
                                  SelectionChanged="PartitionList_SelectionChanged">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Padding="13"
+                                    <Border Padding="10"
                                             Background="{DynamicResource PanelBg2Brush}"
                                             BorderBrush="{DynamicResource LineSoftBrush}"
                                             BorderThickness="1"
                                             CornerRadius="6">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="22" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="&#xE7C3;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource AccentBrush}" FontSize="15"
                                                        VerticalAlignment="Top" />
                                             <StackPanel Grid.Column="1">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
-                                                <TextBlock Text="{Binding OffsetText}" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,4,0,0" />
-                                                <TextBlock Text="{Binding Status}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding OffsetText}" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+                                                <TextBlock Text="{Binding StatusDisplay}"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           FontSize="12"
+                                                           LineHeight="16"
+                                                           TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding Status}" />
                                             </StackPanel>
                                         </Grid>
                                     </Border>
@@ -584,6 +606,10 @@
                                 <DataGrid.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Save Selected..." Click="SaveFileGridSelection_Click" />
+                                        <Separator />
+                                        <MenuItem Header="Copy Offset" Click="CopyFileGridOffset_Click" />
+                                        <MenuItem Header="Copy First Cluster" Click="CopyFileGridFirstCluster_Click" />
+                                        <MenuItem Header="Copy Address Details" Click="CopyFileGridAddressDetails_Click" />
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
@@ -788,13 +814,14 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2"
+                <Border x:Name="ResultsPanel"
+                        Grid.Row="2"
                         Background="{DynamicResource PanelBgBrush}"
                         BorderBrush="{DynamicResource LineSoftBrush}"
                         BorderThickness="1"
                         CornerRadius="6">
                     <TabControl x:Name="ResultsTabs" Margin="12,8,12,12" SelectedIndex="2">
-                        <TabItem Header="Recovery View">
+                        <TabItem x:Name="RecoveryTab" Header="Recovery View">
                             <Border Background="{DynamicResource DataGridRowBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="0,6,6,6">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -842,6 +869,10 @@
                                         <DataGrid.ContextMenu>
                                             <ContextMenu>
                                                 <MenuItem Header="Save Selected..." Click="SaveRecoveryGridSelection_Click" />
+                                                <Separator />
+                                                <MenuItem Header="Copy Offset" Click="CopyRecoveryGridOffset_Click" />
+                                                <MenuItem Header="Copy First Cluster" Click="CopyRecoveryGridFirstCluster_Click" />
+                                                <MenuItem Header="Copy Address Details" Click="CopyRecoveryGridAddressDetails_Click" />
                                             </ContextMenu>
                                         </DataGrid.ContextMenu>
                                         <DataGrid.Columns>
@@ -875,7 +906,7 @@
                                 </Grid>
                             </Border>
                         </TabItem>
-                        <TabItem Header="Carved Files">
+                        <TabItem x:Name="CarverTab" Header="Carved Files">
                             <Border Background="{DynamicResource DataGridRowBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="0,6,6,6">
                                 <DataGrid x:Name="CarverGrid"
                                           ItemsSource="{Binding CarvedFiles}"
@@ -887,6 +918,10 @@
                                     <DataGrid.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="Save Selected..." Click="SaveCarverGridSelection_Click" />
+                                            <Separator />
+                                            <MenuItem Header="Copy Offset" Click="CopyCarverGridOffset_Click" />
+                                            <MenuItem Header="Copy Relative Offset" Click="CopyCarverGridRelativeOffset_Click" />
+                                            <MenuItem Header="Copy Address Details" Click="CopyCarverGridAddressDetails_Click" />
                                         </ContextMenu>
                                     </DataGrid.ContextMenu>
                                     <DataGrid.Columns>

@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 
 namespace FATXTools.Wpf;
 
@@ -38,7 +39,19 @@ public partial class CustomPartitionWindow : Window
             return;
         }
 
-        if (_imageLength > 0 && (offset >= _imageLength || offset + length > _imageLength))
+        if (_imageLength > 0 && offset >= _imageLength)
+        {
+            StatusTextBlock.Text = $"Start offset must be before EOF (0x{_imageLength:X}).";
+            return;
+        }
+
+        if (_imageLength > 0 && length > _imageLength)
+        {
+            StatusTextBlock.Text = $"Partition length cannot be longer than the image (0x{_imageLength:X} bytes).";
+            return;
+        }
+
+        if (_imageLength > 0 && length > _imageLength - offset)
         {
             StatusTextBlock.Text = "Partition range extends beyond the image length.";
             return;
@@ -57,6 +70,50 @@ public partial class CustomPartitionWindow : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+        {
+            ToggleWindowMaximized();
+            return;
+        }
+
+        if (e.ButtonState == MouseButtonState.Pressed)
+        {
+            try
+            {
+                DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // DragMove can throw if the mouse state changes during the drag.
+            }
+        }
+    }
+
+    private void MinimizeWindow_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void MaximizeRestoreWindow_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleWindowMaximized();
+    }
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e)
+    {
+        DialogResult = false;
+        Close();
+    }
+
+    private void ToggleWindowMaximized()
+    {
+        WindowState = WindowState == WindowState.Maximized
+            ? WindowState.Normal
+            : WindowState.Maximized;
     }
 
     private static bool TryParseInteger(string? text, out long value)

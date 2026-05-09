@@ -38,8 +38,6 @@ public sealed class AppSettings
 
     public string CustomCarversFile { get; set; } = DefaultCustomCarversFile;
 
-    public string PlayStationMountToolPath { get; set; } = string.Empty;
-
     public string Theme { get; set; } = WpfTheme.Dark;
 
     public List<string> RecentImages { get; set; } = [];
@@ -82,7 +80,6 @@ public sealed class AppSettings
             LogFile = LogFile,
             EnableFileLogging = EnableFileLogging,
             CustomCarversFile = NormalizeCustomCarversFile(CustomCarversFile),
-            PlayStationMountToolPath = PlayStationMountToolPath,
             Theme = WpfTheme.NormalizeName(Theme),
             RecentImages = NormalizeRecentImages(RecentImages)
         };

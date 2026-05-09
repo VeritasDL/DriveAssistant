@@ -23,7 +23,7 @@ The codebase started as FATXTools, but the active application and published proj
 
 The easiest way to run Drive Assistant is to download the latest Windows x64 ZIP from [GitHub Releases](https://github.com/rain0x06/DriveAssistant/releases/latest), extract it, and run `Drive Assistant.exe`.
 
-The portable release package is self-contained and includes the .NET runtime plus the bundled native PlayStation helper binaries under `tools\ps-hdd`.
+The portable release package is self-contained and includes the .NET runtime.
 
 ## Repository Layout
 
@@ -121,8 +121,8 @@ Release packages are built by `.github/workflows/release.yaml` for tags like `v0
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
 - Continue PS4 deleted-file validation with images that contain known nonzero deleted UFS file data. The current managed PS4 reader loads the tested devkit raw image, exports active files, decrypts partitions, and finds name-only deleted dirent candidates, but that image does not prove full deleted-file data recovery.
 - Research PS5 support separately from PS4 by adding `ssd0.*` partition discovery, validating tEXFAT/exFAT and UFS partition readers, and identifying what PS5 `bfs` user storage requires before claiming PS5 image support.
-- Decide whether to remove the bundled PlayStation native bridge entirely or keep it as a PS3/manual-mount fallback. The unified PS4 image path now has managed Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support.
-- If the native PlayStation bridge is removed, port the separate PlayStation Mount window and remaining PS3 HDD paths to managed code first.
+- PlayStation HDD handling is managed in the WPF project. The old native PS-HDD bridge and mount-tool fallback have been removed; PS4 Orbis GPT, AES-XTS, UFS2, FAT16/FAT32, active export, partition decrypt, and deleted UFS metadata support are handled in C#.
+- Restore or extend PS3 HDD paths in managed code if PS3-specific mounting is needed again.
 - Add fuller inner-filesystem mounting for decrypted or plaintext XVD/XVC contents where technically practical.
 - Broaden automated tests around managed PS4 deleted-inode export paths using fixtures with known recoverable deleted content.
 - Configure repository code-signing secrets if signed release binaries are required: `WINDOWS_CODESIGN_PFX_BASE64`, `WINDOWS_CODESIGN_PFX_PASSWORD`, and optionally `WINDOWS_CODESIGN_TIMESTAMP_URL`.
@@ -145,7 +145,7 @@ The bundled PlayStation helper lineage comes from [PS-HDD-Tools](https://github.
 ## Sources / References
 
 - Existing FATXTools / Drive Assistant repository history, source code, tests, and local synthetic fixtures.
-- [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) for the PlayStation helper tooling lineage and native bridge compatibility target.
+- [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) for PlayStation helper tooling lineage and storage-behavior reference material.
 - [DiscUtils.Ntfs 0.16.13](https://www.nuget.org/packages/DiscUtils.Ntfs) for NTFS parsing used by the Xbox GPT/NTFS reader.
 - [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
 - [Microsoft exFAT file system specification](https://learn.microsoft.com/windows/win32/fileio/exfat-specification) for exFAT layout reference.

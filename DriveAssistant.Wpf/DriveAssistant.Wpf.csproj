@@ -37,17 +37,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="tools\ps-hdd\pshdd-bridge.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>tools\ps-hdd\pshdd-bridge.dll</Link>
-    </Content>
-    <Content Include="tools\ps-hdd\mount-tool.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>tools\ps-hdd\mount-tool.exe</Link>
-    </Content>
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="DiscUtils.Ntfs" Version="0.16.13" />
   </ItemGroup>
 

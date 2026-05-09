@@ -78,6 +78,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly Dictionary<string, int> _liveLogLineIndexes = new();
     private readonly List<string> _temporaryScanFiles = new();
     private bool _suppressRecentImageSelection;
+    private DetachedResultsWindow? _detachedResultsWindow;
+    private bool _closingMainWindow;
 
     public MainWindow()
     {
@@ -1727,8 +1729,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        _closingMainWindow = true;
         if (_drive == null && _xboxStorageImage == null && _playStationStorageImage == null && _genericFileSystemImage == null && _databaseSnapshot == null)
         {
+            if (_detachedResultsWindow != null)
+            {
+                DockResultsTabs();
+            }
+
             return;
         }
 
@@ -1741,14 +1749,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (result == MessageBoxResult.Cancel)
         {
+            _closingMainWindow = false;
             e.Cancel = true;
             return;
         }
 
         if (result == MessageBoxResult.Yes && !SaveProgressDatabase())
         {
+            _closingMainWindow = false;
             e.Cancel = true;
             return;
+        }
+
+        if (_detachedResultsWindow != null)
+        {
+            DockResultsTabs();
         }
 
         ClearTemporaryScanFiles();
@@ -1834,6 +1849,89 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetClusterViewerVisible(ClusterViewerPanel.Visibility != Visibility.Visible);
     }
 
+    private void ToggleResultsWindow_Click(object sender, RoutedEventArgs e)
+    {
+        if (_detachedResultsWindow == null)
+        {
+            DetachResultsTabs();
+        }
+        else
+        {
+            DockResultsTabs();
+        }
+    }
+
+    private void DetachResultsTabs()
+    {
+        if (_detachedResultsWindow != null)
+        {
+            _detachedResultsWindow.Activate();
+            return;
+        }
+
+        _detachedResultsWindow = new DetachedResultsWindow
+        {
+            Owner = this,
+            DataContext = this
+        };
+        _detachedResultsWindow.DockRequested += DetachedResultsWindow_DockRequested;
+        _detachedResultsWindow.Closing += DetachedResultsWindow_Closing;
+
+        ResultsTabs.Items.Remove(RecoveryTab);
+        ResultsTabs.Items.Remove(CarverTab);
+        _detachedResultsWindow.DetachedTabs.Items.Add(RecoveryTab);
+        _detachedResultsWindow.DetachedTabs.Items.Add(CarverTab);
+        _detachedResultsWindow.DetachedTabs.SelectedItem = RecoveryTab;
+        ResultsTabs.SelectedItem = LogTab;
+        ToggleResultsWindowText.Text = "Dock Results";
+        ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files back into the main window";
+        _detachedResultsWindow.Show();
+    }
+
+    private void DetachedResultsWindow_DockRequested(object? sender, EventArgs e)
+    {
+        DockResultsTabs();
+    }
+
+    private void DetachedResultsWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_closingMainWindow)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        DockResultsTabs();
+    }
+
+    private void DockResultsTabs()
+    {
+        if (_detachedResultsWindow == null)
+        {
+            return;
+        }
+
+        var window = _detachedResultsWindow;
+        window.DockRequested -= DetachedResultsWindow_DockRequested;
+        window.Closing -= DetachedResultsWindow_Closing;
+
+        window.DetachedTabs.Items.Remove(RecoveryTab);
+        window.DetachedTabs.Items.Remove(CarverTab);
+        var logIndex = ResultsTabs.Items.IndexOf(LogTab);
+        if (logIndex < 0)
+        {
+            logIndex = ResultsTabs.Items.Count;
+        }
+
+        ResultsTabs.Items.Insert(logIndex, RecoveryTab);
+        ResultsTabs.Items.Insert(logIndex + 1, CarverTab);
+        ResultsTabs.SelectedItem = RecoveryTab;
+        ToggleResultsWindowText.Text = "Pop Out Results";
+        ToggleResultsWindowButton.ToolTip = "Move Recovery View and Carved Files into a resizable window";
+        _detachedResultsWindow = null;
+        window.Close();
+    }
+
     private void SetClusterViewerVisible(bool visible)
     {
         if (visible)
@@ -1880,26 +1978,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AppLogger.Configure(_settings.LogFile, _settings.EnableFileLogging);
             AppendLog("Settings saved.");
         }
-    }
-
-    private void OpenPlayStationImageWindow(string imagePath)
-    {
-        StatusText = "Opening as PlayStation HDD image...";
-        AppendLog($"FATX mount was not available; opening PlayStation image tools for: {imagePath}");
-
-        var dialog = new PlayStationMountWindow(_settings, imagePath)
-        {
-            Owner = this
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-            _settings.PlayStationMountToolPath = dialog.MountToolPath;
-            _settings.Save();
-            AppendLog($"PlayStation HDD image handled: {dialog.ImagePath}");
-        }
-
-        StatusText = "Ready";
     }
 
     private void About_Click(object sender, RoutedEventArgs e)
@@ -2108,6 +2186,82 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (TryGetContextMenuGrid(sender, out var grid))
         {
             await SaveRecoveryRowsAsync(grid.SelectedItems.OfType<RecoveryFileRow>().ToList());
+        }
+    }
+
+    private void CopyFileGridOffset_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<FileRow>().Select(row => $"{row.Name}\t{row.OffsetText}"), "Copied file offsets.");
+        }
+    }
+
+    private void CopyFileGridFirstCluster_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(
+                grid.SelectedItems.OfType<FileRow>().Select(row => $"{row.Name}\t{FormatFileRowFirstCluster(row)}"),
+                "Copied file first clusters.");
+        }
+    }
+
+    private void CopyFileGridAddressDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<FileRow>().Select(FormatFileRowAddressDetails), "Copied file address details.");
+        }
+    }
+
+    private void CopyRecoveryGridOffset_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<RecoveryFileRow>().Select(row => $"{row.Name}\t{row.OffsetText}"), "Copied recovery offsets.");
+        }
+    }
+
+    private void CopyRecoveryGridFirstCluster_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(
+                grid.SelectedItems.OfType<RecoveryFileRow>().Select(row => $"{row.Name}\t{FormatRecoveryRowFirstCluster(row)}"),
+                "Copied recovery first clusters.");
+        }
+    }
+
+    private void CopyRecoveryGridAddressDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<RecoveryFileRow>().Select(FormatRecoveryRowAddressDetails), "Copied recovery address details.");
+        }
+    }
+
+    private void CopyCarverGridOffset_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<CarvedFileRow>().Select(row => $"{row.Name}\t{row.OffsetText}"), "Copied carved file offsets.");
+        }
+    }
+
+    private void CopyCarverGridRelativeOffset_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<CarvedFileRow>().Select(row => $"{row.Name}\t{row.RelativeOffsetText}"), "Copied carved file relative offsets.");
+        }
+    }
+
+    private void CopyCarverGridAddressDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryGetContextMenuGrid(sender, out var grid))
+        {
+            CopyRowsToClipboard(grid.SelectedItems.OfType<CarvedFileRow>().Select(FormatCarvedRowAddressDetails), "Copied carved file address details.");
         }
     }
 
@@ -5445,11 +5599,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void RefreshLogText()
     {
         var logBox = LogTextBox;
-        var previousOffset = logBox?.VerticalOffset ?? 0;
-        var scrollableHeight = logBox == null ? 0 : Math.Max(0, logBox.ExtentHeight - logBox.ViewportHeight);
-        var wasAtBottom = logBox == null ||
-                          scrollableHeight <= 0 ||
-                          previousOffset >= scrollableHeight - 1;
 
         LogText = _logLines.Count == 0
             ? string.Empty
@@ -5457,14 +5606,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         logBox?.Dispatcher.BeginInvoke(new Action(() =>
         {
-            if (wasAtBottom)
-            {
-                logBox.ScrollToEnd();
-                return;
-            }
-
-            var updatedScrollableHeight = Math.Max(0, logBox.ExtentHeight - logBox.ViewportHeight);
-            logBox.ScrollToVerticalOffset(Math.Min(previousOffset, updatedScrollableHeight));
+            logBox.ScrollToEnd();
         }), System.Windows.Threading.DispatcherPriority.Background);
     }
 
@@ -5622,6 +5764,117 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             .GroupBy(row => (row.Volume, row.Offset, row.Name))
             .Select(group => group.First())
             .ToList();
+    }
+
+    private void CopyRowsToClipboard(IEnumerable<string> rows, string successMessage)
+    {
+        var text = string.Join(Environment.NewLine, rows.Where(row => !string.IsNullOrWhiteSpace(row)));
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            StatusText = "No address details available for the selection.";
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+            StatusText = successMessage;
+            AppendLog(successMessage);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Clipboard copy failed.";
+            AppendLog($"Clipboard copy failed: {ex.Message}");
+        }
+    }
+
+    private static string FormatFileRowFirstCluster(FileRow row)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(row.ClusterText))
+        {
+            parts.Add($"cluster {row.ClusterText}");
+        }
+
+        if (TryGetFatxClusterAddress(row.Volume, row.ClusterNumber, out var address))
+        {
+            parts.Add($"address 0x{address:X}");
+        }
+
+        return parts.Count == 0 ? "n/a" : string.Join(", ", parts);
+    }
+
+    private static string FormatRecoveryRowFirstCluster(RecoveryFileRow row)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(row.ClusterText))
+        {
+            parts.Add($"cluster {row.ClusterText}");
+        }
+
+        if (TryGetFatxClusterAddress(row.Volume, row.ClusterNumber, out var address))
+        {
+            parts.Add($"address 0x{address:X}");
+        }
+
+        return parts.Count == 0 ? "n/a" : string.Join(", ", parts);
+    }
+
+    private static string FormatFileRowAddressDetails(FileRow row)
+    {
+        return string.Join(Environment.NewLine, new[]
+        {
+            row.Name,
+            $"Source: {row.Source}",
+            $"Kind: {row.Kind}",
+            $"Offset: {row.OffsetText}",
+            $"First cluster: {FormatFileRowFirstCluster(row)}",
+            !string.IsNullOrWhiteSpace(row.ClusterRangesText) ? $"Cluster ranges: {row.ClusterRangesText}" : string.Empty
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static string FormatRecoveryRowAddressDetails(RecoveryFileRow row)
+    {
+        return string.Join(Environment.NewLine, new[]
+        {
+            row.Name,
+            $"Kind: {row.Kind}",
+            $"Dirent offset: {row.OffsetText}",
+            $"First cluster: {FormatRecoveryRowFirstCluster(row)}",
+            !string.IsNullOrWhiteSpace(row.ClusterRangesText) ? $"Cluster ranges: {row.ClusterRangesText}" : string.Empty
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static string FormatCarvedRowAddressDetails(CarvedFileRow row)
+    {
+        return string.Join(Environment.NewLine, new[]
+        {
+            row.Name,
+            $"Kind: {row.Kind}",
+            $"Offset: {row.OffsetText}",
+            !string.IsNullOrWhiteSpace(row.RelativeOffsetText) ? $"Relative offset: {row.RelativeOffsetText}" : string.Empty,
+            !string.IsNullOrWhiteSpace(row.Source) ? $"Source: {row.Source}" : string.Empty,
+            !string.IsNullOrWhiteSpace(row.Detail) ? $"Detail: {row.Detail}" : string.Empty
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static bool TryGetFatxClusterAddress(Volume? volume, long cluster, out long address)
+    {
+        address = 0;
+        if (volume == null || cluster <= 0 || cluster > uint.MaxValue)
+        {
+            return false;
+        }
+
+        try
+        {
+            address = volume.ClusterToPhysicalOffset((uint)cluster);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool TryGetContextMenuGrid(object sender, out DataGrid grid)
@@ -5930,6 +6183,18 @@ public sealed class PartitionModel
     public string Name => FatxVolume?.Name ?? NtfsVolume?.Name ?? PlayStationVolume?.Name ?? GenericVolume?.Name ?? SnapshotPartition?.Name ?? "Partition";
 
     public string Status { get; }
+
+    public string StatusDisplay
+    {
+        get
+        {
+            var value = Status
+                .Replace("PlayStation 4 HDD (managed)", "PS4 managed", StringComparison.OrdinalIgnoreCase)
+                .Replace("Original Xbox FATX", "Xbox FATX", StringComparison.OrdinalIgnoreCase)
+                .Replace("Xbox 360 FATX", "360 FATX", StringComparison.OrdinalIgnoreCase);
+            return value.Length <= 44 ? value : value[..41] + "...";
+        }
+    }
 
     public string OffsetText => $"0x{Offset:X}";
 

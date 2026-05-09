@@ -92,8 +92,6 @@ jobs:
 
           $targets = @(
             Join-Path $env:publish_dir "Drive Assistant.exe"
-            Join-Path $env:publish_dir "tools\ps-hdd\mount-tool.exe"
-            Join-Path $env:publish_dir "tools\ps-hdd\pshdd-bridge.dll"
           ) | Where-Object { Test-Path $_ }
 
           foreach ($target in $targets) {
