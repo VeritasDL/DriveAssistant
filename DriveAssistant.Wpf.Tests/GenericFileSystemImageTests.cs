@@ -241,6 +241,23 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void PlayStationStorageImage_ManagedPs4Reader_ScansDeletedFatEntries()
+    {
+        using var imageFile = new TempFile(CreatePs4OrbisFat16Image(includeDeletedEntry: true));
+        using var keyFile = TempFile.Empty();
+
+        using var image = PlayStationStorageImage.Open(imageFile.Path, keyFile.Path);
+
+        var volume = Assert.Single(image.Volumes);
+        var row = Assert.Single(volume.ScanDeletedInodes());
+        Assert.Equal("_ELETED.BIN", row.Name);
+        Assert.Equal("Deleted FAT file entry", row.MetadataStatus);
+        Assert.True(row.IsDeleted);
+        Assert.Equal(1234, row.Size);
+        Assert.Equal(0x400, row.Offset);
+    }
+
+    [Fact]
     public void PlayStationStorageImage_ManagedPs4Reader_RealImageSmoke_WhenConfigured()
     {
         var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS4_E2E_IMAGE");
@@ -284,6 +301,11 @@ public sealed class GenericFileSystemImageTests
             var loaded = image.Volumes.Where(volume => volume.IsLoaded).ToList();
             Assert.NotEmpty(loaded);
             Assert.All(loaded, volume => Assert.Equal("PlayStation 3 HDD (managed)", volume.FamilyText));
+            var devFlash = loaded.FirstOrDefault(volume => volume.Name.StartsWith("dev_flash", StringComparison.OrdinalIgnoreCase));
+            if (devFlash != null)
+            {
+                Assert.NotNull(devFlash.ScanDeletedInodes());
+            }
         }
     }
 
@@ -809,7 +831,7 @@ public sealed class GenericFileSystemImageTests
         return image;
     }
 
-    private static byte[] CreatePs4OrbisFat16Image(int gptEntryIndex = 0, bool encryptWithIvOffset = false)
+    private static byte[] CreatePs4OrbisFat16Image(int gptEntryIndex = 0, bool encryptWithIvOffset = false, bool includeDeletedEntry = false)
     {
         const int sectorSize = 512;
         const ulong firstPartitionLba = 0x10;
@@ -840,6 +862,16 @@ public sealed class GenericFileSystemImageTests
         Encoding.ASCII.GetBytes("FAT16   ").CopyTo(boot[54..]);
         boot[510] = 0x55;
         boot[511] = 0xAA;
+        if (includeDeletedEntry)
+        {
+            var root = image.AsSpan((int)((firstPartitionLba + 2) * sectorSize), sectorSize);
+            Encoding.ASCII.GetBytes("DELETED BIN").CopyTo(root);
+            root[0] = 0xE5;
+            root[11] = 0x20;
+            BinaryPrimitives.WriteUInt16LittleEndian(root[26..], 2);
+            BinaryPrimitives.WriteUInt32LittleEndian(root[28..], 1234);
+        }
+
         if (encryptWithIvOffset)
         {
             EncryptXtsPartition(image.AsSpan((int)(firstPartitionLba * sectorSize), (int)(partitionSectors * sectorSize)), (ulong)gptEntryIndex << 32, new byte[16], new byte[16]);

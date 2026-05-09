@@ -282,6 +282,35 @@ internal sealed class ManagedPs4VolumeOperations : IPlayStationVolumeOperations
     public string ListDeletedInodesJson(string imagePath, string keyPath, PlayStationVolume volume)
     {
         var partition = GetPartition(volume.Name);
+        if (partition.FileSystem == ManagedPs4FileSystem.Fat)
+        {
+            using var fatReader = OpenReader(imagePath, volume.Name);
+            var fatRows = ManagedPs4FatReader.ScanDeletedEntries(fatReader)
+                .Select(row => new
+                {
+                    name = row.Name,
+                    type = row.Kind,
+                    inode = row.Inode,
+                    size = row.Size,
+                    metadataOffset = $"0x{row.Offset:X}",
+                    inodeOffset = string.Empty,
+                    direntOffset = $"0x{row.Offset:X}",
+                    recordLength = row.RecordLength,
+                    fileType = row.FileType,
+                    nameLength = row.NameLength,
+                    isDeleted = row.IsDeleted,
+                    dataOffsetCount = row.DataOffsetCount,
+                    dataRunCount = row.DataRunCount,
+                    largestRunBytes = row.LargestRunBytes,
+                    fragmentationStatus = row.FragmentationStatus,
+                    dataRanges = row.DataRanges,
+                    dataOffsets = row.DataOffsets,
+                    metadataStatus = row.MetadataStatus
+                });
+
+            return JsonSerializer.Serialize(new { partition = volume.Name, files = fatRows });
+        }
+
         if (partition.FileSystem != ManagedPs4FileSystem.Ufs2)
         {
             throw new InvalidOperationException("Selected PlayStation partition is not a readable UFS2 file system.");
@@ -718,6 +747,32 @@ internal static class ManagedPs4FatReader
 {
     public static List<PlayStationFileEntry> ReadEntries(IPlayStationPartitionReader reader)
     {
+        var geometry = ReadGeometry(reader);
+        var entries = geometry.IsFat32
+            ? ReadDirectory(reader, geometry.Fat, geometry.DataOffset, geometry.ClusterSize, geometry.RootCluster, "/", true, ClusterToOffset(geometry.DataOffset, geometry.ClusterSize, geometry.RootCluster), DateTime.MinValue)
+            : ReadFixedRootDirectory(reader, geometry.Fat, geometry.DataOffset, geometry.ClusterSize, geometry.RootDirectoryOffset, geometry.RootEntries, "/");
+        return entries;
+    }
+
+    public static List<PlayStationMetadataEntry> ScanDeletedEntries(IPlayStationPartitionReader reader)
+    {
+        var geometry = ReadGeometry(reader);
+        var rows = new List<PlayStationMetadataEntry>();
+        if (geometry.IsFat32)
+        {
+            ScanDeletedDirectory(reader, geometry, geometry.RootCluster, "/", rows, []);
+        }
+        else
+        {
+            var data = reader.ReadBytes(geometry.RootDirectoryOffset, geometry.RootEntries * 32);
+            ScanDeletedDirectoryBlock(reader, geometry, data, geometry.RootDirectoryOffset, "/", rows, []);
+        }
+
+        return rows;
+    }
+
+    private static FatGeometry ReadGeometry(IPlayStationPartitionReader reader)
+    {
         var boot = reader.ReadBytes(0, 512);
         if (boot[510] != 0x55 || boot[511] != 0xAA)
         {
@@ -752,10 +807,14 @@ internal static class ManagedPs4FatReader
 
         var fatBytes = checked((int)(sectorsPerFat * bytesPerSector));
         var fat = reader.ReadBytes(reservedSectors * bytesPerSector, fatBytes);
-        var entries = isFat32
-            ? ReadDirectory(reader, fat, dataOffset, clusterSize, rootCluster, "/", true, 0, DateTime.MinValue)
-            : ReadFixedRootDirectory(reader, fat, dataOffset, clusterSize, rootDirectoryOffset, rootEntries, "/");
-        return entries;
+        return new FatGeometry(
+            fat,
+            dataOffset,
+            clusterSize,
+            rootDirectoryOffset,
+            rootEntries,
+            rootCluster,
+            isFat32);
     }
 
     private static List<PlayStationFileEntry> ReadFixedRootDirectory(
@@ -876,6 +935,106 @@ internal static class ManagedPs4FatReader
         return entries;
     }
 
+    private static void ScanDeletedDirectory(
+        IPlayStationPartitionReader reader,
+        FatGeometry geometry,
+        uint firstCluster,
+        string path,
+        List<PlayStationMetadataEntry> rows,
+        HashSet<uint> visited)
+    {
+        if (firstCluster < 2 || !visited.Add(firstCluster))
+        {
+            return;
+        }
+
+        foreach (var cluster in GetClusterChain(geometry.Fat, firstCluster, geometry.IsFat32))
+        {
+            var clusterOffset = ClusterToOffset(geometry.DataOffset, geometry.ClusterSize, cluster);
+            var data = reader.ReadBytes(clusterOffset, geometry.ClusterSize);
+            if (!ScanDeletedDirectoryBlock(reader, geometry, data, clusterOffset, path, rows, visited))
+            {
+                return;
+            }
+        }
+    }
+
+    private static bool ScanDeletedDirectoryBlock(
+        IPlayStationPartitionReader reader,
+        FatGeometry geometry,
+        byte[] data,
+        long directoryOffset,
+        string path,
+        List<PlayStationMetadataEntry> rows,
+        HashSet<uint> visited)
+    {
+        for (var offset = 0; offset + 32 <= data.Length; offset += 32)
+        {
+            var entry = data.AsSpan(offset, 32);
+            var first = entry[0];
+            if (first == 0x00)
+            {
+                return false;
+            }
+
+            var attributes = entry[11];
+            if (attributes == 0x0F || (attributes & 0x08) != 0)
+            {
+                continue;
+            }
+
+            var isDirectory = (attributes & 0x10) != 0;
+            var cluster = ((uint)BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(20, 2)) << 16)
+                          | BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(26, 2));
+            if (first == 0xE5)
+            {
+                var deletedName = DecodeDeletedShortName(entry);
+                if (deletedName is "." or ".." || string.IsNullOrWhiteSpace(deletedName))
+                {
+                    continue;
+                }
+
+                var size = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(28, 4));
+                var clusters = isDirectory
+                    ? BuildContiguousClusterList(cluster, geometry.ClusterSize, geometry.ClusterSize, geometry.Fat.Length)
+                    : BuildContiguousClusterList(cluster, size, geometry.ClusterSize, geometry.Fat.Length);
+                var extents = isDirectory ? [] : BuildExtents(geometry.DataOffset, geometry.ClusterSize, clusters, size);
+                var absoluteOffset = directoryOffset + offset;
+                rows.Add(new PlayStationMetadataEntry(
+                    $"_{deletedName.TrimStart('_')}",
+                    isDirectory ? "Directory" : "File",
+                    absoluteOffset,
+                    0,
+                    32,
+                    attributes,
+                    (byte)Math.Min(deletedName.Length, byte.MaxValue),
+                    true,
+                    isDirectory ? "Deleted FAT directory entry" : "Deleted FAT file entry",
+                    isDirectory ? 0 : size,
+                    extents.Count,
+                    extents.Count,
+                    extents.Count == 0 ? 0 : extents.Max(extent => extent.Length),
+                    extents.Count > 0 ? "Contiguous FAT recovery estimate" : string.Empty,
+                    FormatRanges(extents),
+                    string.Join(", ", extents.Take(128).Select(extent => $"0x{extent.Offset:X}"))));
+                continue;
+            }
+
+            var name = DecodeShortName(entry);
+            if (name is "." or ".." || string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            if (isDirectory && cluster >= 2)
+            {
+                ScanDeletedDirectory(reader, geometry, cluster, Combine(path, name), rows, visited);
+            }
+        }
+
+        return true;
+    }
+
     private static List<uint> GetClusterChain(byte[] fat, uint firstCluster, bool fat32)
     {
         var chain = new List<uint>();
@@ -928,6 +1087,20 @@ internal static class ManagedPs4FatReader
         return extents;
     }
 
+    private static List<uint> BuildContiguousClusterList(uint firstCluster, long length, int clusterSize, int fatEntries)
+    {
+        if (firstCluster < 2)
+        {
+            return [];
+        }
+
+        var count = Math.Max(1, (int)((length + clusterSize - 1) / clusterSize));
+        return Enumerable.Range((int)firstCluster, count)
+            .Where(cluster => cluster > 1 && cluster < fatEntries)
+            .Select(cluster => (uint)cluster)
+            .ToList();
+    }
+
     private static IEnumerable<(uint Start, int Count)> CollapseClusters(IReadOnlyList<uint> clusters)
     {
         if (clusters.Count == 0)
@@ -973,6 +1146,16 @@ internal static class ManagedPs4FatReader
     {
         var name = Encoding.ASCII.GetString(entry[..8]).Trim();
         var extension = Encoding.ASCII.GetString(entry.Slice(8, 3)).Trim();
+        return string.IsNullOrWhiteSpace(extension) ? name : $"{name}.{extension}";
+    }
+
+    private static string DecodeDeletedShortName(ReadOnlySpan<byte> entry)
+    {
+        Span<byte> copy = stackalloc byte[11];
+        entry[..11].CopyTo(copy);
+        copy[0] = (byte)'_';
+        var name = Encoding.ASCII.GetString(copy[..8]).Trim();
+        var extension = Encoding.ASCII.GetString(copy.Slice(8, 3)).Trim();
         return string.IsNullOrWhiteSpace(extension) ? name : $"{name}.{extension}";
     }
 
@@ -1029,6 +1212,20 @@ internal static class ManagedPs4FatReader
     {
         return ManagedPs4UfsReader.CreateEntry(path, name, type, length, created, modified, accessed, offset, extents, inodeOffsets, direntOffsets, blocktableOffsets);
     }
+
+    private static string FormatRanges(IReadOnlyList<FileExtent> extents)
+    {
+        return string.Join(", ", extents.Take(128).Select(extent => $"0x{extent.Offset:X}+0x{extent.Length:X}"));
+    }
+
+    private sealed record FatGeometry(
+        byte[] Fat,
+        long DataOffset,
+        int ClusterSize,
+        long RootDirectoryOffset,
+        int RootEntries,
+        uint RootCluster,
+        bool IsFat32);
 }
 
 internal static class ManagedPs4UfsReader

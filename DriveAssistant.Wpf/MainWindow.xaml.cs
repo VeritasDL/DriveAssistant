@@ -1208,9 +1208,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     Rows = activeRows.Concat(deletedCandidates).ToList(),
                     ActiveCount = activeRows.Count,
                     DeletedCandidateCount = deletedCandidates.Count,
-                    ScannedDeletedCandidates = deletedCandidates.Count > 0 || hasDecryptedCache,
+                    ScannedDeletedCandidates = deletedCandidates.Count > 0 || hasDecryptedCache || IsPlayStationFatDeletedCandidateScanRelevant(volume),
                     DeletedCandidateSkipReason = IsPlayStationUfsDeletedCandidateScanRelevant(volume)
                         ? "deleted UFS dirent slack scan requires a decrypted partition cache; run File Carver on this partition once to create the temporary cache"
+                        : IsPlayStationFatDeletedCandidateScanRelevant(volume)
+                            ? "no deleted FAT directory entries found"
                         : "deleted UFS dirent slack scan is not applicable to this non-UFS partition"
                 };
             }, cancellationToken);
@@ -1224,7 +1226,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ShowMetadataResultsInFileTable(
                 $"{volume.Name} metadata",
                 result.ScannedDeletedCandidates
-                    ? $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates"
+                    ? $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted metadata candidates"
                     : $"{volume.Name} metadata scan: {result.ActiveCount:N0} active entries; {result.DeletedCandidateSkipReason}");
             RecoveryTreeRoots.Clear();
             RecoveryRows.Clear();
@@ -1239,7 +1241,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             progressRow.Update(100, "100%");
             StatusText = _isFileCarverRunning ? "File carver still running..." : "Ready";
             AppendLog(result.ScannedDeletedCandidates
-                ? $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted UFS candidates."
+                ? $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries, {result.DeletedCandidateCount:N0} deleted metadata candidates."
                 : $"PlayStation metadata scan complete: {result.ActiveCount:N0} active entries. {result.DeletedCandidateSkipReason}.");
         }
         catch (OperationCanceledException)
@@ -5789,6 +5791,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         return volume.Name.Equals("user", StringComparison.OrdinalIgnoreCase)
                || volume.Name.Equals("eap_user", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPlayStationFatDeletedCandidateScanRelevant(PlayStationVolume volume)
+    {
+        return volume.Name.Equals("dev_hdd1", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("dev_flash1", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("dev_flash2", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("dev_flash3", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("eap_vsh", StringComparison.OrdinalIgnoreCase)
+               || volume.Name.Equals("system_ex", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ClearTemporaryScanFiles()

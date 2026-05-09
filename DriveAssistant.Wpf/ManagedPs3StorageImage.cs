@@ -452,7 +452,37 @@ internal sealed class ManagedPs3VolumeOperations : IPlayStationVolumeOperations
 
     public string ListDeletedInodesJson(string imagePath, string keyPath, PlayStationVolume volume)
     {
-        if (GetPartition(volume.Name).FileSystem != Ps3FileSystem.Ufs2)
+        var partition = GetPartition(volume.Name);
+        if (partition.FileSystem == Ps3FileSystem.Fat)
+        {
+            using var fatReader = OpenReader(imagePath, volume.Name);
+            var fatRows = ManagedPs4FatReader.ScanDeletedEntries(fatReader)
+                .Select(row => new
+                {
+                    name = row.Name,
+                    type = row.Kind,
+                    inode = row.Inode,
+                    size = row.Size,
+                    metadataOffset = $"0x{row.Offset:X}",
+                    inodeOffset = string.Empty,
+                    direntOffset = $"0x{row.Offset:X}",
+                    recordLength = row.RecordLength,
+                    fileType = row.FileType,
+                    nameLength = row.NameLength,
+                    isDeleted = row.IsDeleted,
+                    dataOffsetCount = row.DataOffsetCount,
+                    dataRunCount = row.DataRunCount,
+                    largestRunBytes = row.LargestRunBytes,
+                    fragmentationStatus = row.FragmentationStatus,
+                    dataRanges = row.DataRanges,
+                    dataOffsets = row.DataOffsets,
+                    metadataStatus = row.MetadataStatus
+                });
+
+            return JsonSerializer.Serialize(new { partition = volume.Name, files = fatRows });
+        }
+
+        if (partition.FileSystem != Ps3FileSystem.Ufs2)
         {
             return JsonSerializer.Serialize(new { partition = volume.Name, files = Array.Empty<object>() });
         }
