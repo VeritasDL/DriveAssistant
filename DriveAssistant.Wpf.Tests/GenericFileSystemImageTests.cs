@@ -3,6 +3,7 @@ using FATXTools.Wpf;
 using System;
 using System.Buffers.Binary;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -237,6 +238,33 @@ public sealed class GenericFileSystemImageTests
         Assert.True(volume.IsLoaded);
         Assert.Equal("PlayStation 4 HDD (managed)", volume.FamilyText);
         Assert.Empty(volume.GetRoot());
+    }
+
+    [Fact]
+    public void PlayStationStorageImage_ManagedPs4Reader_RealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS4_E2E_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS4_E2E_KEY");
+        if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(keyPath))
+        {
+            return;
+        }
+
+        using var image = PlayStationStorageImage.Open(imagePath, keyPath);
+
+        Assert.NotEmpty(image.Volumes);
+        var loaded = image.Volumes.Where(volume => volume.IsLoaded).ToList();
+        Assert.NotEmpty(loaded);
+        Assert.All(loaded, volume => Assert.Equal("PlayStation 4 HDD (managed)", volume.FamilyText));
+
+        var firstFile = loaded
+            .SelectMany(volume => WalkPlayStationEntries(volume.GetRoot()))
+            .FirstOrDefault(entry => !entry.IsDirectory && entry.Length > 0 && entry.Length <= 8 * 1024 * 1024);
+        Assert.NotNull(firstFile);
+
+        using var output = TempFile.Empty();
+        firstFile.Volume.CopyFile(firstFile, output.Path);
+        Assert.Equal(firstFile.Length, new FileInfo(output.Path).Length);
     }
 
     [Fact]
@@ -916,6 +944,18 @@ public sealed class GenericFileSystemImageTests
     private static T GetProperty<T>(object instance, string name)
     {
         return (T)instance.GetType().GetProperty(name)!.GetValue(instance)!;
+    }
+
+    private static IEnumerable<PlayStationFileEntry> WalkPlayStationEntries(IEnumerable<PlayStationFileEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            yield return entry;
+            foreach (var child in WalkPlayStationEntries(entry.Children))
+            {
+                yield return child;
+            }
+        }
     }
 
     private sealed class TempFile : IDisposable
