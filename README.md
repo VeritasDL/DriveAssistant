@@ -114,6 +114,18 @@ dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x6
 - PS4 package carving recognizes `CNT` package headers as `PKG`, and classifies observed type-`1` debug packages as `DPKG`.
 - Nintendo Switch carving recognizes plaintext/decrypted `NCA2`/`NCA3` content archive headers, `NSP`/`PFS0` packages, `XCI` game-card images, `NRO`, `NSO`, and generic `ELF` executables. Raw encrypted NCA headers remain encrypted by design; run carving against a decrypted/mounted BIS partition when possible.
 
+## Nintendo Switch Key Notes
+
+- Switch NAND/eMMC images can be opened without keys for GPT partition discovery, but encrypted BIS partitions need a text key file to mount.
+- Accepted formats are biskeydump-style lines such as `BIS KEY 1 (crypt): 0123...` / `BIS KEY 1 (tweak): 4567...`, or prod.keys-style names such as `bis_key_01_crypt = 0123...`.
+- Each crypt/tweak value must be exactly 32 hexadecimal characters.
+- Required key pairs by partition:
+  - `BIS KEY 0 (crypt)` and `BIS KEY 0 (tweak)` for `PRODINFO` / `PRODINFOF`.
+  - `BIS KEY 1 (crypt)` and `BIS KEY 1 (tweak)` for `SAFE`.
+  - `BIS KEY 2 (crypt)` and `BIS KEY 2 (tweak)` for `SYSTEM`.
+  - `BIS KEY 3 (crypt)` and `BIS KEY 3 (tweak)` for `USER`.
+- If a FAT32 BIS partition does not mount, re-check the matching crypt/tweak pair against the source photo or dump. A single transcribed character error is enough to produce random decrypted data instead of a FAT32 boot sector.
+
 ## Roadmap / TODO
 
 - Validate PS4 raw-image and ZIP-backed workflows against representative real images with known deleted-file ground truth.
