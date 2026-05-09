@@ -539,6 +539,23 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void SwitchBisKeySet_LoadsBiskeydumpAndProdKeysForms()
+    {
+        using var temp = TempFile.Empty();
+        File.WriteAllText(temp.Path, """
+BIS KEY 3 (crypt) 00112233445566778899AABBCCDDEEFF
+BIS KEY 3 (tweak): FFEEDDCCBBAA99887766554433221100
+bis_key_02_crypt = 11112222333344445555666677778888
+bis_key_02_tweak = 88887777666655554444333322221111
+""");
+
+        var keys = SwitchBisKeySet.Load(temp.Path);
+
+        Assert.True(keys.TryGet(3, out _));
+        Assert.True(keys.TryGet(2, out _));
+    }
+
+    [Fact]
     public void SwitchStorageImage_RealNandSmoke_WhenConfigured()
     {
         var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_SWITCH_E2E_IMAGE");

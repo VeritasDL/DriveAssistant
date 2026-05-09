@@ -119,6 +119,32 @@ dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x6
 - Switch NAND/eMMC images can be opened without keys for GPT partition discovery, but encrypted BIS partitions need a text key file to mount.
 - Accepted formats are biskeydump-style lines such as `BIS KEY 1 (crypt): 0123...` / `BIS KEY 1 (tweak): 4567...`, or prod.keys-style names such as `bis_key_01_crypt = 0123...`.
 - Each crypt/tweak value must be exactly 32 hexadecimal characters.
+- A complete biskeydump-style file can be as small as:
+
+```text
+BIS KEY 0 (crypt): 00112233445566778899AABBCCDDEEFF
+BIS KEY 0 (tweak): 00112233445566778899AABBCCDDEEFF
+BIS KEY 1 (crypt): 00112233445566778899AABBCCDDEEFF
+BIS KEY 1 (tweak): 00112233445566778899AABBCCDDEEFF
+BIS KEY 2 (crypt): 00112233445566778899AABBCCDDEEFF
+BIS KEY 2 (tweak): 00112233445566778899AABBCCDDEEFF
+BIS KEY 3 (crypt): 00112233445566778899AABBCCDDEEFF
+BIS KEY 3 (tweak): 00112233445566778899AABBCCDDEEFF
+```
+
+- The same file can use prod.keys-style names:
+
+```text
+bis_key_00_crypt = 00112233445566778899AABBCCDDEEFF
+bis_key_00_tweak = 00112233445566778899AABBCCDDEEFF
+bis_key_01_crypt = 00112233445566778899AABBCCDDEEFF
+bis_key_01_tweak = 00112233445566778899AABBCCDDEEFF
+bis_key_02_crypt = 00112233445566778899AABBCCDDEEFF
+bis_key_02_tweak = 00112233445566778899AABBCCDDEEFF
+bis_key_03_crypt = 00112233445566778899AABBCCDDEEFF
+bis_key_03_tweak = 00112233445566778899AABBCCDDEEFF
+```
+
 - Required key pairs by partition:
   - `BIS KEY 0 (crypt)` and `BIS KEY 0 (tweak)` for `PRODINFO` / `PRODINFOF`.
   - `BIS KEY 1 (crypt)` and `BIS KEY 1 (tweak)` for `SAFE`.

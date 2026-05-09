@@ -77,7 +77,7 @@ public sealed class SwitchStorageImage : IDisposable
 
                 var status = info switch
                 {
-                    { Encrypted: true, BisKeyId: { } statusKeyId } when !keys.Contains(statusKeyId) => $"Detected, encrypted with BIS key {statusKeyId}; select a biskeydump/prod.keys file to mount",
+                    { Encrypted: true, BisKeyId: { } statusKeyId } when !keys.Contains(statusKeyId) => $"Detected, encrypted with BIS key {statusKeyId}; provide BIS KEY {statusKeyId} (crypt) and BIS KEY {statusKeyId} (tweak) to mount",
                     { FileSystem: SwitchPartitionFileSystem.Fat12 } => "Detected, FAT12 BIS partition; raw carving/export only in this build",
                     { FileSystem: SwitchPartitionFileSystem.Raw } => $"Detected, raw Switch partition: {info.Description}",
                     _ => $"Detected, {info.Description}"
@@ -691,7 +691,7 @@ internal sealed class SwitchBisPartitionReader
 
 internal sealed class SwitchBisKeySet
 {
-    private static readonly Regex BisTextRegex = new(@"BIS\s+KEY\s+(?<id>[0-3])\s+\((?<kind>crypt|tweak)\)\s*:\s*(?<hex>[0-9a-fA-F]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex BisTextRegex = new(@"BIS\s+KEY\s+(?<id>[0-3])\s+\((?<kind>crypt|tweak)\)\s*[:=]?\s*(?<hex>[0-9a-fA-F]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex ProdKeysRegex = new(@"bis_key_(?<id>0[0-3])_(?<kind>crypt|tweak)\s*=\s*(?<hex>[0-9a-fA-F]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly Dictionary<int, SwitchBisKey> _keys;
 

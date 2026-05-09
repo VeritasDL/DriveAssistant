@@ -11,11 +11,23 @@ namespace FATXTools.Wpf;
 
 public partial class ConsoleImageOpenWindow : Window
 {
+    private const string SwitchKeyStatus =
+        "Switch encrypted BIS partitions need a plain text key file. Include BIS KEY 0-3 crypt/tweak pairs, or prod.keys names like bis_key_03_crypt and bis_key_03_tweak. Hover the key field for an example.";
+
     private const string SwitchKeyHelp =
-        "Switch NAND keys: select a plain text biskeydump/prod.keys-style file with 32-hex-character crypt and tweak values. " +
-        "Required names: BIS KEY 0 (crypt), BIS KEY 0 (tweak), BIS KEY 1 (crypt), BIS KEY 1 (tweak), BIS KEY 2 (crypt), BIS KEY 2 (tweak), BIS KEY 3 (crypt), BIS KEY 3 (tweak). " +
-        "prod.keys names bis_key_00_crypt through bis_key_03_tweak are also accepted. " +
-        "BIS key 0 is PRODINFO/PRODINFOF, key 1 is SAFE, key 2 is SYSTEM, and key 3 is USER.";
+        "Switch key file example:\n" +
+        "BIS KEY 0 (crypt): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 0 (tweak): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 1 (crypt): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 1 (tweak): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 2 (crypt): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 2 (tweak): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 3 (crypt): 00112233445566778899AABBCCDDEEFF\n" +
+        "BIS KEY 3 (tweak): 00112233445566778899AABBCCDDEEFF\n\n" +
+        "prod.keys names are also accepted, for example:\n" +
+        "bis_key_03_crypt = 00112233445566778899AABBCCDDEEFF\n" +
+        "bis_key_03_tweak = 00112233445566778899AABBCCDDEEFF\n\n" +
+        "BIS 0 = PRODINFO/PRODINFOF, BIS 1 = SAFE, BIS 2 = SYSTEM, BIS 3 = USER.";
 
     private readonly IReadOnlyList<ConsoleImageKindOption> _options =
     [
@@ -161,7 +173,7 @@ public partial class ConsoleImageOpenWindow : Window
         KeyPathTextBox.Visibility = visibility;
         BrowseKeyButton.Visibility = visibility;
         KeyPathTextBox.ToolTip = ImageKind == ConsoleDriveImageKind.NintendoSwitchNand
-            ? SwitchKeyHelp
+            ? CreateWrappedToolTip(SwitchKeyHelp)
             : "Optional for already-decrypted PlayStation images.";
     }
 
@@ -178,7 +190,7 @@ public partial class ConsoleImageOpenWindow : Window
             StatusTextBlock.Text = ImageKind switch
             {
                 ConsoleDriveImageKind.PlayStation3Hdd => "PlayStation 3 uses the managed PS3 reader. Select an EID root key for encrypted HDDs, or leave blank for already-decrypted images.",
-                ConsoleDriveImageKind.NintendoSwitchNand => SwitchKeyHelp,
+                ConsoleDriveImageKind.NintendoSwitchNand => SwitchKeyStatus,
                 _ => "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images."
             };
             return;
@@ -195,6 +207,21 @@ public partial class ConsoleImageOpenWindow : Window
     private static bool RequiresKey(ConsoleDriveImageKind kind)
     {
         return kind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd or ConsoleDriveImageKind.NintendoSwitchNand;
+    }
+
+    private static ToolTip CreateWrappedToolTip(string text)
+    {
+        return new ToolTip
+        {
+            MaxWidth = 560,
+            Content = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 12
+            }
+        };
     }
 }
 
