@@ -469,6 +469,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="22" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="&#xE74E;"
                                            FontFamily="Segoe MDL2 Assets"
@@ -480,6 +481,11 @@
                                                   ContentSource="Header"
                                                   RecognizesAccessKey="True"
                                                   VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           Margin="18,0,0,0"
+                                           VerticalAlignment="Center" />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>

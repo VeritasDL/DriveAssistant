@@ -1,7 +1,10 @@
 using FATX.Analyzers;
 using Microsoft.Win32;
 using System;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -52,9 +55,12 @@ public partial class SettingsWindow : Window
         EnableFileLoggingCheckBox.IsChecked = _settings.EnableFileLogging;
         LogFileTextBox.Text = _settings.LogFile;
         CustomCarversTextBox.Text = AppSettings.NormalizeCustomCarversFile(_settings.CustomCarversFile);
+        ResetShortcutRows(ShortcutCatalog.Normalize(_settings.Shortcuts));
     }
 
     public AppSettings Result => _settings;
+
+    public ObservableCollection<ShortcutEditorRow> ShortcutRows { get; } = new();
 
     private void BrowseLog_Click(object sender, RoutedEventArgs e)
     {
@@ -109,6 +115,10 @@ public partial class SettingsWindow : Window
         _settings.EnableFileLogging = EnableFileLoggingCheckBox.IsChecked == true;
         _settings.LogFile = LogFileTextBox.Text.Trim();
         _settings.CustomCarversFile = AppSettings.NormalizeCustomCarversFile(CustomCarversTextBox.Text);
+        if (!TrySaveShortcuts())
+        {
+            return;
+        }
 
         DialogResult = true;
         Close();
@@ -118,6 +128,89 @@ public partial class SettingsWindow : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    private void RestoreDefaultShortcuts_Click(object sender, RoutedEventArgs e)
+    {
+        ResetShortcutRows(ShortcutCatalog.DefaultMap());
+    }
+
+    private void ShortcutTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox textBox)
+        {
+            return;
+        }
+
+        if (e.Key is Key.Back or Key.Delete)
+        {
+            textBox.Text = string.Empty;
+            textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            e.Handled = true;
+            return;
+        }
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        var modifiers = Keyboard.Modifiers;
+        try
+        {
+            var gesture = new KeyGesture(key, modifiers);
+            textBox.Text = ShortcutCatalog.FormatGesture(gesture);
+            textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            e.Handled = true;
+        }
+        catch (NotSupportedException)
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void ResetShortcutRows(System.Collections.Generic.IDictionary<string, string> shortcuts)
+    {
+        ShortcutRows.Clear();
+        foreach (var definition in ShortcutCatalog.All)
+        {
+            ShortcutRows.Add(new ShortcutEditorRow(
+                definition.Id,
+                definition.Category,
+                definition.Name,
+                shortcuts.TryGetValue(definition.Id, out var gesture) ? gesture : definition.DefaultGesture));
+        }
+    }
+
+    private bool TrySaveShortcuts()
+    {
+        foreach (var row in ShortcutRows)
+        {
+            if (!ShortcutCatalog.TryParseGesture(row.Gesture, out var gesture))
+            {
+                MessageBox.Show(this, $"Shortcut '{row.Gesture}' for '{row.Name}' is not valid.", "Settings",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            row.Gesture = gesture == null ? string.Empty : ShortcutCatalog.FormatGesture(gesture);
+        }
+
+        var duplicates = ShortcutRows
+            .Where(row => !string.IsNullOrWhiteSpace(row.Gesture))
+            .GroupBy(row => row.Gesture.Trim(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicates != null)
+        {
+            MessageBox.Show(this, $"Shortcut '{duplicates.Key}' is assigned to more than one action.", "Settings",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        _settings.Shortcuts = ShortcutRows.ToDictionary(row => row.Id, row => row.Gesture.Trim(), StringComparer.OrdinalIgnoreCase);
+        return true;
     }
 
     private static int ClampWorkerCount(int count)
@@ -202,5 +295,46 @@ public sealed record ThemeOption(string Name)
     public override string ToString()
     {
         return Name;
+    }
+}
+
+public sealed class ShortcutEditorRow : INotifyPropertyChanged
+{
+    private string _gesture;
+
+    public ShortcutEditorRow(string id, string category, string name, string gesture)
+    {
+        Id = id;
+        Category = category;
+        Name = name;
+        _gesture = gesture;
+    }
+
+    public string Id { get; }
+
+    public string Category { get; }
+
+    public string Name { get; }
+
+    public string Gesture
+    {
+        get => _gesture;
+        set
+        {
+            if (string.Equals(_gesture, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _gesture = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }

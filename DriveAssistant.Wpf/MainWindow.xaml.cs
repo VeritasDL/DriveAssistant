@@ -82,12 +82,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _closingMainWindow;
     private Point? _resultsTabDragStart;
     private TabItem? _resultsTabDragItem;
+    private readonly Dictionary<string, UiActionCommand> _shortcutCommands = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindow()
     {
         InitializeComponent();
         BuildClusterMapColumns();
         DataContext = this;
+        ConfigureShortcutBindings();
         AppLogger.Configure(_settings.LogFile, _settings.EnableFileLogging);
         AppLogger.LineWritten += line => Dispatcher.Invoke(() => AppendLog(line));
         RefreshRecentImages();
@@ -1875,6 +1877,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetClusterViewerVisible(ClusterViewerPanel.Visibility != Visibility.Visible);
     }
 
+    private void TogglePartitionsShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        if (PartitionsPanel.Visibility == Visibility.Visible)
+        {
+            ClosePartitions_Click(sender, e);
+        }
+        else
+        {
+            RestorePartitions_Click(sender, e);
+        }
+    }
+
+    private void ToggleInspectorShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        if (InspectorPanel.Visibility == Visibility.Visible)
+        {
+            CloseInspector_Click(sender, e);
+        }
+        else
+        {
+            RestoreInspector_Click(sender, e);
+        }
+    }
+
+    private void SearchShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        ExecuteShortcut(ShortcutCatalog.Search);
+    }
+
     private void ToggleResultsWindow_Click(object sender, RoutedEventArgs e)
     {
         if (_detachedResultsWindow == null)
@@ -2059,7 +2090,127 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _settings.Save();
             WpfTheme.Apply(_settings.Theme);
             AppLogger.Configure(_settings.LogFile, _settings.EnableFileLogging);
+            ConfigureShortcutBindings();
             AppendLog("Settings saved.");
+        }
+    }
+
+    private void MenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { ContextMenu: { } menu } button)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.DataContext = DataContext;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void ConfigureShortcutBindings()
+    {
+        InputBindings.Clear();
+        _shortcutCommands.Clear();
+        foreach (var definition in ShortcutCatalog.All)
+        {
+            var command = new UiActionCommand(() => ExecuteShortcut(definition.Id), () => CanExecuteShortcut(definition.Id));
+            _shortcutCommands[definition.Id] = command;
+            var gestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, definition.Id);
+            if (ShortcutCatalog.TryParseGesture(gestureText, out var gesture) && gesture != null)
+            {
+                InputBindings.Add(new KeyBinding(command, gesture));
+            }
+        }
+
+        UpdateShortcutMenuText();
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void UpdateShortcutMenuText()
+    {
+        OpenImageMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.OpenImage);
+        LoadDatabaseMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.LoadDatabase);
+        SaveDatabaseMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.SaveDatabase);
+        SaveSelectedMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.SaveSelected);
+        SearchMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.Search);
+        MetadataScanMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.MetadataScan);
+        FileCarverMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.FileCarver);
+        TogglePartitionsMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.TogglePartitions);
+        ToggleInspectorMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.ToggleInspector);
+        ToggleClusterViewerMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.ToggleClusterViewer);
+        ToggleResultsWindowMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.ToggleResultsWindow);
+        AddPartitionMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.AddPartition);
+        UnmountPartitionMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.UnmountPartition);
+        SettingsMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.Settings);
+        AboutMenuItem.InputGestureText = ShortcutCatalog.GetGestureText(_settings.Shortcuts, ShortcutCatalog.About);
+    }
+
+    private bool CanExecuteShortcut(string id)
+    {
+        return id switch
+        {
+            ShortcutCatalog.LoadDatabase or ShortcutCatalog.SaveDatabase => HasOpenDatabase,
+            ShortcutCatalog.SaveSelected => HasSelection,
+            ShortcutCatalog.MetadataScan => CanRunMetadataScan,
+            ShortcutCatalog.FileCarver => CanRunFileCarver,
+            ShortcutCatalog.AddPartition => CanAddCustomPartition,
+            ShortcutCatalog.UnmountPartition => CanUnmountPartition,
+            _ => true
+        };
+    }
+
+    private void ExecuteShortcut(string id)
+    {
+        var routed = new RoutedEventArgs();
+        switch (id)
+        {
+            case ShortcutCatalog.OpenImage:
+                OpenImage_Click(this, routed);
+                break;
+            case ShortcutCatalog.LoadDatabase:
+                LoadDatabase_Click(this, routed);
+                break;
+            case ShortcutCatalog.SaveDatabase:
+                SaveDatabase_Click(this, routed);
+                break;
+            case ShortcutCatalog.SaveSelected:
+                SaveSelected_Click(this, routed);
+                break;
+            case ShortcutCatalog.Search:
+                SearchBox.Focus();
+                SearchBox.SelectAll();
+                break;
+            case ShortcutCatalog.MetadataScan:
+                MetadataScan_Click(this, routed);
+                break;
+            case ShortcutCatalog.FileCarver:
+                FileCarver_Click(this, routed);
+                break;
+            case ShortcutCatalog.AddPartition:
+                AddCustomPartition_Click(this, routed);
+                break;
+            case ShortcutCatalog.UnmountPartition:
+                UnmountPartition_Click(this, routed);
+                break;
+            case ShortcutCatalog.TogglePartitions:
+                TogglePartitionsShortcut_Click(this, routed);
+                break;
+            case ShortcutCatalog.ToggleInspector:
+                ToggleInspectorShortcut_Click(this, routed);
+                break;
+            case ShortcutCatalog.ToggleClusterViewer:
+                ToggleClusterViewer_Click(this, routed);
+                break;
+            case ShortcutCatalog.ToggleResultsWindow:
+                ToggleResultsWindow_Click(this, routed);
+                break;
+            case ShortcutCatalog.Settings:
+                Settings_Click(this, routed);
+                break;
+            case ShortcutCatalog.About:
+                About_Click(this, routed);
+                break;
         }
     }
 
@@ -5570,6 +5721,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(HasOpenDatabase));
         OnPropertyChanged(nameof(CanCancelScan));
         OnPropertyChanged(nameof(CanCancelExport));
+        OnPropertyChanged(nameof(CanAddCustomPartition));
+        OnPropertyChanged(nameof(CanUnmountPartition));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private void UpdateTaskState()
@@ -7977,6 +8131,34 @@ public sealed class CarvedFileRow
 }
 
 public sealed record InspectorRow(string Label, string Value);
+
+internal sealed class UiActionCommand : ICommand
+{
+    private readonly Action _execute;
+    private readonly Func<bool> _canExecute;
+
+    public UiActionCommand(Action execute, Func<bool> canExecute)
+    {
+        _execute = execute;
+        _canExecute = canExecute;
+    }
+
+    public event EventHandler? CanExecuteChanged
+    {
+        add => CommandManager.RequerySuggested += value;
+        remove => CommandManager.RequerySuggested -= value;
+    }
+
+    public bool CanExecute(object? parameter)
+    {
+        return _canExecute();
+    }
+
+    public void Execute(object? parameter)
+    {
+        _execute();
+    }
+}
 
 internal static class MainWindowFormat
 {

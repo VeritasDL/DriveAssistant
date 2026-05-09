@@ -2,6 +2,7 @@ using FATX.Analyzers;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace FATXTools.Wpf;
@@ -42,6 +43,8 @@ public sealed class AppSettings
 
     public List<string> RecentImages { get; set; } = [];
 
+    public Dictionary<string, string> Shortcuts { get; set; } = ShortcutCatalog.DefaultMap();
+
     public static AppSettings Load()
     {
         try
@@ -54,6 +57,7 @@ public sealed class AppSettings
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new AppSettings();
             settings.CustomCarversFile = NormalizeCustomCarversFile(settings.CustomCarversFile);
             settings.RecentImages = NormalizeRecentImages(settings.RecentImages);
+            settings.Shortcuts = ShortcutCatalog.Normalize(settings.Shortcuts);
             return settings;
         }
         catch
@@ -81,7 +85,8 @@ public sealed class AppSettings
             EnableFileLogging = EnableFileLogging,
             CustomCarversFile = NormalizeCustomCarversFile(CustomCarversFile),
             Theme = WpfTheme.NormalizeName(Theme),
-            RecentImages = NormalizeRecentImages(RecentImages)
+            RecentImages = NormalizeRecentImages(RecentImages),
+            Shortcuts = ShortcutCatalog.Normalize(Shortcuts).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
         };
     }
 

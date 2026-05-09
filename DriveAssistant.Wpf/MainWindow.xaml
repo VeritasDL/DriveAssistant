@@ -100,35 +100,81 @@
                 Background="{DynamicResource ToolbarBgBrush}"
                 BorderBrush="{DynamicResource LineSoftBrush}"
                 BorderThickness="0,0,0,1"
-                Padding="22,14">
+                Padding="12,7">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="215" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="390" MinWidth="320" />
+                    <ColumnDefinition Width="300" MinWidth="240" />
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="38" Height="38" CornerRadius="9" Background="{DynamicResource AccentSoftBrush}" Margin="0,0,12,0">
-                        <Image Source="appicon.ico" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <StackPanel>
-                        <TextBlock Text="Drive Assistant" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
-                        <TextBlock Text="Console drive analysis" FontSize="11" Foreground="{DynamicResource MutedBrush}" />
-                    </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <Button Content="File" Height="30" MinHeight="30" MinWidth="54" Padding="12,0" Click="MenuButton_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="OpenImageMenuItem" Header="Open Image..." Click="OpenImage_Click" />
+                                <MenuItem x:Name="LoadDatabaseMenuItem" Header="Load Database..." Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
+                                <MenuItem x:Name="SaveDatabaseMenuItem" Header="Save Database..." Click="SaveDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
+                                <Separator />
+                                <MenuItem x:Name="SaveSelectedMenuItem" Header="Save Selected..." Click="SaveSelected_Click" IsEnabled="{Binding HasSelection}" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Content="Analysis" Height="30" MinHeight="30" MinWidth="76" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="MetadataScanMenuItem" Header="Metadata Scan" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}" />
+                                <MenuItem x:Name="FileCarverMenuItem" Header="File Carver" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Content="View" Height="30" MinHeight="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="SearchMenuItem" Header="Search Results" Click="SearchShortcut_Click" />
+                                <Separator />
+                                <MenuItem x:Name="TogglePartitionsMenuItem" Header="Show / Hide Partitions" Click="TogglePartitionsShortcut_Click" />
+                                <MenuItem x:Name="ToggleInspectorMenuItem" Header="Show / Hide Inspector" Click="ToggleInspectorShortcut_Click" />
+                                <MenuItem x:Name="ToggleClusterViewerMenuItem" Header="Toggle Cluster Viewer" Click="ToggleClusterViewer_Click" />
+                                <MenuItem x:Name="ToggleResultsWindowMenuItem" Header="Pop Out / Dock Results" Click="ToggleResultsWindow_Click" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Content="Tools" Height="30" MinHeight="30" MinWidth="58" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="AddPartitionMenuItem" Header="Add Custom Partition..." Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
+                                <MenuItem x:Name="UnmountPartitionMenuItem" Header="Unmount Partition" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}" />
+                                <Separator />
+                                <MenuItem x:Name="SettingsMenuItem" Header="Settings..." Click="Settings_Click" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Content="Help" Height="30" MinHeight="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="AboutMenuItem" Header="About Drive Assistant" Click="About_Click" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                 </StackPanel>
 
-                <WrapPanel Grid.Column="1" VerticalAlignment="Center" ItemHeight="44" Margin="-5,-3,0,-3">
-                    <Button Style="{StaticResource PrimaryButton}" Margin="5,3" Click="OpenImage_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE8E5;" />
-                            <TextBlock Text="Open Image" />
-                        </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource PrimaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" ToolTip="Open image" Click="OpenImage_Click">
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE8E5;" Margin="0" />
                     </Button>
+                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTip="Metadata scan" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}">
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE9D2;" Margin="0" />
+                    </Button>
+                    <Button Style="{StaticResource SecondaryButton}" Width="34" MinWidth="34" Height="30" MinHeight="30" Padding="0" Margin="6,0,0,0" ToolTip="File carver" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}">
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE9F5;" Margin="0" />
+                    </Button>
+                    <Separator Width="1" Margin="10,4" Background="{DynamicResource LineSoftBrush}" />
                     <ComboBox x:Name="RecentImagesCombo"
-                              Width="210"
-                              MinHeight="34"
-                              Margin="5,3"
+                              Width="170"
+                              MinHeight="30"
+                              Margin="0"
                               ItemsSource="{Binding RecentImages}"
                               SelectionChanged="RecentImagesCombo_SelectionChanged"
                               ToolTip="Open a recently selected HDD image">
@@ -138,87 +184,41 @@
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE8E5;" />
-                            <TextBlock Text="Load DB" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="SaveDatabase_Click" IsEnabled="{Binding HasOpenDatabase}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE74E;" />
-                            <TextBlock Text="Save DB" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE9D2;" />
-                            <TextBlock Text="Metadata Scan" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE9F5;" />
-                            <TextBlock Text="File Carver" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="SaveSelected_Click" IsEnabled="{Binding HasSelection}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE74E;" />
-                            <TextBlock Text="Save Selected" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE710;" />
-                            <TextBlock Text="Add Partition" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE711;" />
-                            <TextBlock Text="Unmount" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="Settings_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE713;" />
-                            <TextBlock Text="Settings" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}" Margin="5,3" Click="About_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE946;" />
-                            <TextBlock Text="About" />
-                        </StackPanel>
-                    </Button>
                     <Button x:Name="ShowPartitionsButton"
                             Style="{StaticResource SecondaryButton}"
-                            MinWidth="112"
-                            Margin="5,3"
+                            Width="34"
+                            MinWidth="34"
+                            Height="30"
+                            MinHeight="30"
+                            Padding="0"
+                            Margin="8,0,0,0"
+                            ToolTip="Restore partitions"
                             Visibility="Collapsed"
                             Click="RestorePartitions_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
-                            <TextBlock Text="Partitions" />
-                        </StackPanel>
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" Margin="0" />
                     </Button>
                     <Button x:Name="ShowInspectorButton"
                             Style="{StaticResource SecondaryButton}"
-                            MinWidth="104"
-                            Margin="5,3"
+                            Width="34"
+                            MinWidth="34"
+                            Height="30"
+                            MinHeight="30"
+                            Padding="0"
+                            Margin="8,0,0,0"
+                            ToolTip="Restore inspector"
                             Visibility="Collapsed"
                             Click="RestoreInspector_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource IconText}" Text="&#xE946;" />
-                            <TextBlock Text="Inspector" />
-                        </StackPanel>
+                        <TextBlock Style="{StaticResource IconText}" Text="&#xE946;" Margin="0" />
                     </Button>
                     <Button x:Name="ClusterViewerToggleButton"
                             Style="{StaticResource SecondaryButton}"
-                            MinWidth="126"
-                            Margin="5,3"
+                            MinWidth="98"
+                            Height="30"
+                            MinHeight="30"
+                            Padding="10,0"
+                            Margin="8,0,0,0"
                             ToolTip="Show cluster viewer"
+                            Visibility="Collapsed"
                             Click="ToggleClusterViewer_Click">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE9D2;" />
@@ -227,18 +227,22 @@
                     </Button>
                     <Button x:Name="ToggleResultsWindowButton"
                             Style="{StaticResource SecondaryButton}"
-                            MinWidth="124"
-                            Margin="5,3"
+                            MinWidth="86"
+                            Height="30"
+                            MinHeight="30"
+                            Padding="10,0"
+                            Margin="6,0,0,0"
                             ToolTip="Move Recovery View and Carved Files into a resizable window"
+                            Visibility="Collapsed"
                             Click="ToggleResultsWindow_Click">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource IconText}" Text="&#xE8A7;" />
                             <TextBlock x:Name="ToggleResultsWindowText" Text="Pop Out Results" />
                         </StackPanel>
                     </Button>
-                </WrapPanel>
+                </StackPanel>
 
-                <Grid Grid.Column="2" VerticalAlignment="Center">
+                <Grid Grid.Column="3" VerticalAlignment="Center">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
