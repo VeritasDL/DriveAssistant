@@ -8,7 +8,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 
 - Open raw disk images such as `.img`, `.bin`, and `.raw`.
 - Open HDD Raw Copy `.imgc` compressed images.
-- Browse and export from supported FATX, FAT32, exFAT, NTFS, UFS2, and console-specific partition layouts.
+- Browse and export from supported FATX, FAT16, FAT32, exFAT, NTFS, UFS2, and console-specific partition layouts.
 - Scan filesystem metadata for deleted, orphaned, or recoverable entries.
 - Carve known file signatures from raw disks and partitions with configurable scan profiles.
 - Inspect offsets, extents, clusters, timestamps, attributes, and recovery status.
@@ -19,15 +19,16 @@ The project has a general recovery-tool foundation with a strong focus on consol
 
 | Family | Current support |
 | --- | --- |
-| General HDD/SSD images | Raw image loading, partition discovery, FAT32, exFAT, NTFS, export, metadata scanning, file carving. |
+| General HDD/SSD images | Raw image loading, partition discovery, FAT16, FAT32, exFAT, NTFS, export, metadata scanning, file carving. |
 | Original Xbox | FATX partition browsing, metadata recovery, export, file carving. |
 | Xbox 360 | FATX partition browsing, metadata recovery, export, XEX carving, file carving. |
 | Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, nested readable filesystem probing where possible. |
 | PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
 | PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
-| PlayStation 2 | APA partition table detection for PS2 HDD images, PFS/HDLoader partition classification, raw partition export, and partition-scoped carving. |
-| Nintendo Wii / GameCube | Raw disc image detection, WBFS container detection, raw export, and Wii/GameCube/WBFS carving signatures. |
-| Nintendo Wii U | WFS/dev storage candidate detection, raw export, WFS/FST carving signatures, and key-gated recovery planning for OTP/SEEPROM-backed storage. |
+| PlayStation 2 | APA partition table detection for PS2 HDD images, managed PFS directory browsing/export, deleted/slack PFS metadata scanning, orphan PFS inode recovery candidates, HDLoader partition classification, raw partition export, and partition-scoped carving. |
+| Nintendo Wii / GameCube | Raw disc image detection, WBFS container detection, RVT-H devkit HDD bank detection, managed Wii NAND SFFS metadata browsing/export with BootMii keys, raw export, and Wii/GameCube/WBFS carving signatures. |
+| Nintendo Wii U | Managed Wii U WFS MLC browsing/export with matching `otp.bin`, WFS deleted metadata candidates, WFS/dev storage candidate detection, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, raw export, and WFS/FST/WUX carving signatures. |
+| Nintendo DS / DSi / 3DS | Nintendo DS NitroFS ROM browsing/export, plaintext/decrypted CTR/DSi FAT16 image browsing/export/deleted FAT scanning, DSi NAND layout candidates including 240 MiB trimmed dumps, 3DS NCSD/NCCH partition/container detection, raw export, and DS/3DS carving signatures. |
 | Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving. |
 
 ## Recovery Workflows
@@ -38,6 +39,7 @@ Drive Assistant is built around practical recovery sessions rather than one-shot
 - **Export:** copy files or folders out of an image with progress, cancellation, and disk-space preflight checks.
 - **Metadata scan:** search filesystem structures for deleted or orphaned records.
 - **File carving:** scan raw regions for known signatures when metadata is missing or damaged.
+- **Photo preview:** preview common image formats from mounted files and carved results in the inspector.
 - **Nested probing:** detect readable filesystems inside supported container formats such as Xbox XVD/XVC.
 - **Analysis state:** save and reopen analysis databases to continue work later.
 
@@ -61,8 +63,9 @@ Format-specific carving includes:
 
 - Xbox 360 XEX variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 - PS4 packages: `CNT` package headers as `PKG`, including observed type-`1` debug packages as `DPKG`.
-- PS2 storage: APA HDD partition headers.
-- Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, Wii U WFS markers, and Wii U FST markers.
+- PS2 storage: APA HDD partition headers and partition-scoped carving from mounted PFS volumes.
+- Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, RVT-H disc banks, Wii U WFS markers, Wii U FST markers, and WUX compressed disc images.
+- Nintendo DS / DSi / 3DS: Nintendo DS NitroFS ROMs, 3DS NCSD/CCI/NAND images, and 3DS NCCH/CXI/CFA containers.
 - Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
 - Custom signatures from `custom_carvers.json`.
 
@@ -70,7 +73,7 @@ Raw encrypted content is not magically decrypted by carving. For encrypted conso
 
 ## Wii U WFS Keys
 
-Wii U WFS storage is console-keyed. Current builds identify WFS/dev HDD candidates, accept local key material, derive the USB key from OTP plus SEEPROM, and validate/decrypt the WFS device header when the matching files are supplied. Full directory browsing still depends on valid key material from the console that formatted the drive.
+Wii U WFS storage is console-keyed. Current builds identify WFS/dev HDD candidates, accept local key material, derive the USB key from OTP plus SEEPROM, validate/decrypt the WFS device header, and mount MLC WFS directory trees when the matching `otp.bin` is supplied. Managed WFS export decrypts file blocks from the mounted MLC image.
 
 Accepted key paths:
 
@@ -80,6 +83,18 @@ Accepted key paths:
 `otp.bin` is normally 1024 bytes. `seeprom.bin` is normally 512 bytes. Do not publish real console OTP or SEEPROM dumps; keep them local, mirroring the Switch key-file approach.
 
 Some preserved Wii U devkit HDD dumps are ZIP64 local-header archives without a normal ZIP central directory. Drive Assistant will not silently expand a hundreds-of-GB raw image unless the temp drive has enough free space; if it cannot extract the raw `.img`, it reports the archive as a ZIP-wrapped candidate instead of pretending the compressed wrapper is browseable WFS data.
+
+## DS, DSi, And 3DS Keys
+
+Plain Nintendo DS ROMs are NitroFS containers and do not need keys for browsing/export. Plaintext or already-decrypted 3DS/DSi FAT16 images mount directly and support active browsing, export, deleted FAT entry scanning, and file carving.
+
+Encrypted DSi and 3DS NAND dumps still need console-specific material before their FAT filesystems can be mounted. Example placeholder formats are in [`docs/example-key-files`](docs/example-key-files); keep real `boot9.bin`, OTP, CID, movable.sed, and NAND-derived keys local to the console that produced the dump.
+
+## Wii Keys
+
+Wii support accepts a folder, `.tar.gz`, or `.tgz` archive containing local `common-key`, `sd-key`, `sd-iv`, and `md5-blanker` files. It also accepts BootMii-style `keys.bin` files for Wii NAND exports. These are detected without printing key bytes. The preserved `wii-keys.tar.gz` style archive is supported directly.
+
+Wii NAND file export/decryption needs the matching console's BootMii `keys.bin`. The shared Wii common/SD key archive is not enough for Wii NAND file decryption, and Wii keys are not Wii U `otp.bin`/`seeprom.bin` files.
 
 ## Nintendo Switch Keys
 
@@ -220,6 +235,7 @@ dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x6
 - [DiscUtils.Ntfs 0.16.13](https://www.nuget.org/packages/DiscUtils.Ntfs) for NTFS parsing used by the Xbox GPT/NTFS reader.
 - [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
 - [Microsoft exFAT file system specification](https://learn.microsoft.com/windows/win32/fileio/exfat-specification) for exFAT layout reference.
+- [wfs-tools](https://github.com/koolkdev/wfs-tools) for Wii U WFS structure and block-encryption reference behavior.
 - [FreeBSD UFS dinode definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dinode.h), [directory entry definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dir.h), and [FFS superblock definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ffs/fs.h) for UFS2 metadata parsing and recovery heuristics.
 - [PSDevWiki PS4 PKG files](https://www.psdevwiki.com/ps4/PKG_files), [PS4 partitions](https://www.psdevwiki.com/ps4/Partitions), [PS5 partitions](https://www.psdevwiki.com/ps5/Partitions), [PS5 filesystem](https://www.psdevwiki.com/ps5/Filesystem), and [PS5 kernel](https://www.psdevwiki.com/ps5/Kernel) for PlayStation package and storage-layout references.
 - [.NET application publishing documentation](https://learn.microsoft.com/dotnet/core/deploying/) for the self-contained Windows release package workflow.

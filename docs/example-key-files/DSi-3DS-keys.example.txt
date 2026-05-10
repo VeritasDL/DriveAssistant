@@ -1,0 +1,19 @@
+# DSi / 3DS key material checklist
+# Placeholder names only. Values must come from the same console as the NAND dump.
+
+boot9.bin          # 3DS boot9 dump, commonly 65536 bytes; used by external workflows to derive NAND keys.
+otp.bin            # 3DS OTP dump, commonly 256 bytes.
+otp_dec.mem        # Decrypted OTP dump variant seen in some recovery bundles.
+nand_cid.mem       # 16-byte NAND CID, needed by common 3DS NAND-key derivation workflows.
+movable.sed        # 3DS movable.sed, commonly 288 bytes, for SD/user movable-key workflows.
+
+# Text-key placeholder form for future direct NAND-key loading:
+3ds_nand_ctr_key = 00112233445566778899AABBCCDDEEFF
+3ds_nand_ctr_counter = 00112233445566778899AABBCCDDEEFF
+dsi_nand_key = 00112233445566778899AABBCCDDEEFF
+dsi_nand_counter = 00112233445566778899AABBCCDDEEFF
+
+# Notes:
+# - Plain DS ROM NitroFS browsing/export does not need keys.
+# - Already-decrypted CTR/DSi FAT16 images mount directly.
+# - Encrypted NAND dumps must be decrypted with console-specific material before FAT metadata/deleted recovery can work.

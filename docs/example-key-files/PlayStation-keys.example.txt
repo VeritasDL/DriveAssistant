@@ -1,0 +1,15 @@
+# PlayStation key file examples
+# Placeholder values only. Do not publish real console keys.
+
+# PS3:
+eid_root_key = 00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF
+
+# Or provide a raw PS3 EID root key file:
+eid_root_key.bin    # raw key bytes, normally selected directly in the open dialog
+
+# PS4 / PS4 devkit:
+orbis_hdd_key = 00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF
+
+# Notes:
+# - PS3 encrypted HDD images require the matching EID root key unless the image is already decrypted.
+# - Already-decrypted PS3 images can be opened without the key file.

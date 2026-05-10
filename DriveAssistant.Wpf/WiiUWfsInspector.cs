@@ -100,12 +100,12 @@ internal static class WiiUWfsInspector
         var deviceIv = BinaryPrimitives.ReadUInt32BigEndian(block.AsSpan(0x18));
         var version = BinaryPrimitives.ReadUInt32BigEndian(block.AsSpan(0x1C));
         var deviceType = BinaryPrimitives.ReadUInt16BigEndian(block.AsSpan(0x20));
-        if (version != WfsVersion || deviceType is not (0x136A or 0x16A2))
+        if (version != WfsVersion || deviceType is not (0x1281 or 0x136A or 0x16A2))
         {
             return Invalid(keyType);
         }
 
-        var typeText = deviceType == 0x16A2 ? "USB/dev storage" : "MLC";
+        var typeText = deviceType == 0x16A2 ? "USB/dev storage" : deviceType == 0x1281 ? "MLC/dev kit" : "MLC";
         var detail = encrypted
             ? $"WFS header decrypted with {keyType} key; {typeText}"
             : $"Plain WFS header detected; {typeText}";

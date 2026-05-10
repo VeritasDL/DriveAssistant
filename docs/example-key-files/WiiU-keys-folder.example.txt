@@ -1,0 +1,13 @@
+# Wii U WFS key material examples
+# Placeholder layout only. Keep real OTP/SEEPROM dumps private.
+
+otp.bin       # 1024 bytes; MLC WFS key is read from the OTP dump.
+seeprom.bin   # 512 bytes; used with OTP material to derive USB/dev HDD WFS key.
+
+# Accepted paths:
+# - Select the folder containing otp.bin and seeprom.bin.
+# - Select otp.bin directly; seeprom.bin is auto-detected from the same folder when present.
+#
+# Current managed support:
+# - MLC WFS browsing/export uses otp.bin from the console that produced mlc.bin.
+# - USB/dev HDD header validation derives the USB key from otp.bin + seeprom.bin.

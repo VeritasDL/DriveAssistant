@@ -1,0 +1,16 @@
+# Wii key material examples
+# Placeholder values only. Do not paste real console keys into public docs.
+
+# Shared-key archive/folder layout accepted by Drive Assistant:
+.wii/common-key     # 16 raw bytes, not hex text
+.wii/sd-key         # 16 raw bytes, not hex text
+.wii/sd-iv          # 16 raw bytes, not hex text
+.wii/md5-blanker    # 16 raw bytes, not hex text
+
+# Wii NAND export/decryption:
+keys.bin            # BootMii-style 1024-byte console key dump
+
+# Notes:
+# - The app accepts a folder, .tar.gz, or .tgz containing the shared files above.
+# - Wii NAND file export needs the matching console's BootMii keys.bin.
+# - Shared Wii keys are not Wii U otp.bin/seeprom.bin files.

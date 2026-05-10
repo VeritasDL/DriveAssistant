@@ -536,7 +536,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!IsSupportedImagePath(imagePath))
         {
-            StatusText = "Drop an .img, .imgc, .bin, .raw, .iso, .wbfs, or .zip image file.";
+            StatusText = "Drop an .img, .imgc, .bin, .raw, .iso, .wbfs, .zip, .wud, .wux, .nds, .dsi, .3ds, .cci, .cxi, .cfa, .csu, or .app image file.";
             return;
         }
 
@@ -1083,7 +1083,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static bool IsSupportedImagePath(string path)
     {
-        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".iso" or ".wbfs" or ".zip";
+        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".iso" or ".wbfs" or ".zip" or ".wud" or ".wux" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
     }
 
     private void AddRecentImage(string path)
@@ -5906,6 +5906,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsInspectorPreviewVisible = image != null;
     }
 
+    private static ImageSource? TryCreateFileImagePreview(FileRow row)
+    {
+        const long maxPreviewBytes = 128L * 1024 * 1024;
+        if (row.IsFolder
+            || !LooksLikePreviewableImage(row.Name, row.Kind)
+            || row.SizeBytes <= 0
+            || row.SizeBytes > maxPreviewBytes
+            || row.SnapshotEntry != null
+            || row.Ps3Entry != null)
+        {
+            return null;
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"DriveAssistantPreview-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            WriteDirectoryEntry(row, tempPath);
+            using var input = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
+            return TryDecodeImagePreview(input);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // Preview generation must not block normal file inspection.
+            }
+        }
+    }
+
     private static ImageSource? TryCreateCarvedImagePreview(CarvedFileRow row)
     {
         const long maxPreviewBytes = 128L * 1024 * 1024;
@@ -5953,21 +5993,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return null;
             }
 
-            buffer.Position = 0;
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-            bitmap.DecodePixelWidth = 300;
-            bitmap.StreamSource = buffer;
-            bitmap.EndInit();
-            bitmap.Freeze();
-            return bitmap;
+            return TryDecodeImagePreview(buffer);
         }
         catch
         {
             return null;
         }
+    }
+
+    private static ImageSource? TryDecodeImagePreview(Stream stream)
+    {
+        stream.Position = 0;
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+        bitmap.DecodePixelWidth = 300;
+        bitmap.StreamSource = stream;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private static bool LooksLikePreviewableImage(string name, string kind)
@@ -6019,7 +6064,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void UpdateInspector(FileRow row)
     {
-        SetInspectorPreview(null);
+        SetInspectorPreview(TryCreateFileImagePreview(row));
         InspectorTitle = row.Name;
         InspectorSubtitle = $"{row.Source} {row.Kind}";
         InspectorRows.Clear();

@@ -307,6 +307,7 @@ public sealed class GenericFileCarver
         return TryMatchPlayStation(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchXbox(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchNintendoLegacy(header, remainingLength)
+               ?? TryMatchNintendoHandheld(header, remainingLength)
                ?? TryMatchPlayStation2(header, remainingLength)
                ?? TryMatchNintendoSwitch(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchCommon(header, stream, absoluteOffset, remainingLength);
@@ -711,7 +712,73 @@ public sealed class GenericFileCarver
             return new GenericCarverMatch(string.Empty, ".fst", EstimateUnknownSize(remainingLength), "Nintendo Wii U filesystem table");
         }
 
+        if (StartsWith(header, "WUX0"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".wux", EstimateUnknownSize(remainingLength), "Nintendo Wii U compressed disc image");
+        }
+
         return null;
+    }
+
+    private static GenericCarverMatch? TryMatchNintendoHandheld(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        if (header.Length >= 0x104 && StartsWith(header[0x100..], "NCSD"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".3ds", EstimateUnknownSize(remainingLength), "Nintendo 3DS NCSD/CCI/NAND image");
+        }
+
+        if (header.Length >= 0x104 && StartsWith(header[0x100..], "NCCH"u8))
+        {
+            return new GenericCarverMatch(string.Empty, ".cxi", EstimateUnknownSize(remainingLength), "Nintendo 3DS NCCH/CXI/CFA container");
+        }
+
+        if (LooksLikeNdsRom(header, remainingLength))
+        {
+            var romSize = ReadUInt32LittleEndian(header[0x80..]);
+            var size = romSize > 0 ? Math.Min(romSize, remainingLength) : EstimateUnknownSize(remainingLength);
+            return new GenericCarverMatch(string.Empty, ".nds", size, "Nintendo DS/DSi ROM with NitroFS metadata");
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeNdsRom(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        if (header.Length < 0x200)
+        {
+            return false;
+        }
+
+        var fntOffset = ReadUInt32LittleEndian(header[0x40..]);
+        var fntSize = ReadUInt32LittleEndian(header[0x44..]);
+        var fatOffset = ReadUInt32LittleEndian(header[0x48..]);
+        var fatSize = ReadUInt32LittleEndian(header[0x4C..]);
+        var romSize = ReadUInt32LittleEndian(header[0x80..]);
+        if (fntOffset < 0x200 || fntSize == 0 || fatOffset < 0x200 || fatSize == 0 || fatSize % 8 != 0)
+        {
+            return false;
+        }
+
+        if (fntOffset + (long)fntSize > remainingLength || fatOffset + (long)fatSize > remainingLength)
+        {
+            return false;
+        }
+
+        if (romSize != 0 && romSize > remainingLength + 0x100000)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < 0x10; index++)
+        {
+            var value = header[index];
+            if (value != 0 && (value < 0x20 || value > 0x7E))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static GenericCarverMatch? TryMatchPlayStation2(ReadOnlySpan<byte> header, long remainingLength)

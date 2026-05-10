@@ -35,7 +35,7 @@ public partial class ConsoleImageOpenWindow : Window
         new("Xbox / Xbox 360 FATX", ConsoleDriveImageKind.XboxFatx, false),
         new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false),
         new("Nintendo Switch NAND / eMMC", ConsoleDriveImageKind.NintendoSwitchNand, false),
-        new("Nintendo Wii / Wii U", ConsoleDriveImageKind.NintendoWiiWiiU, false),
+        new("Nintendo Wii / Wii U / DS / 3DS", ConsoleDriveImageKind.NintendoWiiWiiU, false),
         new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
         new("PlayStation 2 HDD", ConsoleDriveImageKind.PlayStation2Hdd, false),
         new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, false),
@@ -67,7 +67,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip)|*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
+            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app)|*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
             CheckFileExists = true
         };
 
@@ -81,7 +81,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "All files (*.*)|*.*|Key files (*.bin;*.key;*.dat;*.txt;prod.keys;keys.txt;eid_root_key;otp.bin;seeprom.bin)|*.bin;*.key;*.dat;*.txt;prod.keys;keys.txt;eid_root_key;otp.bin;seeprom.bin",
+            Filter = "All files (*.*)|*.*|Key files (*.bin;*.key;*.dat;*.txt;*.gz;*.tgz;prod.keys;keys.txt;eid_root_key;otp.bin;seeprom.bin;common-key;sd-key;sd-iv)|*.bin;*.key;*.dat;*.txt;*.gz;*.tgz;prod.keys;keys.txt;eid_root_key;otp.bin;seeprom.bin;common-key;sd-key;sd-iv",
             FilterIndex = 1,
             CheckFileExists = true
         };
@@ -193,7 +193,7 @@ public partial class ConsoleImageOpenWindow : Window
             {
                 ConsoleDriveImageKind.PlayStation3Hdd => "PlayStation 3 uses the managed PS3 reader. Select an EID root key for encrypted HDDs, or leave blank for already-decrypted images.",
                 ConsoleDriveImageKind.NintendoSwitchNand => SwitchKeyStatus,
-                ConsoleDriveImageKind.NintendoWiiWiiU => "Wii U WFS/dev HDD support accepts an otp.bin file or a folder containing otp.bin and seeprom.bin. USB/dev HDDs need both files; raw encrypted candidates can still be opened for carving without keys.",
+                ConsoleDriveImageKind.NintendoWiiWiiU => "Wii U WFS/dev HDD support accepts otp.bin plus seeprom.bin. Wii support also accepts a folder or .tar.gz containing common-key, sd-key, sd-iv, and md5-blanker.",
                 _ => "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images."
             };
             return;
@@ -201,9 +201,9 @@ public partial class ConsoleImageOpenWindow : Window
 
         StatusTextBlock.Text = ImageKind switch
         {
-            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, Wii/Wii U, PlayStation 2 APA, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
+            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, Wii/Wii U/DS/3DS, PlayStation 2 APA, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
             ConsoleDriveImageKind.NintendoSwitchNand => "Switch NAND support reads the GPT and mounts readable FAT32 BIS partitions when BIS keys are supplied.",
-            ConsoleDriveImageKind.NintendoWiiWiiU => "Wii/Wii U support detects raw Wii discs, WBFS containers, and Wii U WFS/dev storage candidates for read-only inspection and carving.",
+            ConsoleDriveImageKind.NintendoWiiWiiU => "Nintendo support detects Wii RVT-H/NAND/disc/WBFS, Wii U WFS/dev storage, Nintendo DS NitroFS ROMs, DSi NAND layouts, and 3DS NCSD/NCCH containers for read-only inspection and carving.",
             ConsoleDriveImageKind.PlayStation2Hdd => "PlayStation 2 support detects APA/PFS and HDLoader partitions for read-only inspection and carving.",
             _ => "This image type does not require a key file."
         };

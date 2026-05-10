@@ -39,6 +39,29 @@ public sealed class GenericFileSystemImageTests
     }
 
     [Fact]
+    public void Open_Fat16RawVolume_LoadsRootFileAndDeletedEntry()
+    {
+        using var temp = new TempFile(CreateFat16Image(includeDeletedEntry: true));
+        using var image = GenericFileSystemImage.Open(temp.Path);
+
+        var partition = Assert.Single(image.Partitions);
+        var volume = Assert.IsType<Fat16Volume>(partition.GenericVolume);
+        var entry = Assert.Single(volume.GetRoot());
+
+        Assert.Equal("HELLO.TXT", entry.Name);
+        Assert.Equal("FAT16", volume.FamilyText);
+        Assert.Equal(5, entry.Length);
+
+        using var output = TempFile.Empty();
+        volume.CopyFile(entry, output.Path);
+        Assert.Equal(Encoding.ASCII.GetBytes("hello"), File.ReadAllBytes(output.Path));
+
+        var deleted = Assert.Single(volume.ScanDeleted(CancellationToken.None, null));
+        Assert.Equal("_LD.BIN", deleted.Name);
+        Assert.True(deleted.IsDeleted);
+    }
+
+    [Fact]
     public void GenericCopyFile_ReportsProgressAndHonorsCancellation()
     {
         using var temp = new TempFile(CreateFat32Image());
@@ -674,6 +697,44 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void WiiKeyMaterial_LoadsLocalDirectory()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dir.FullName, "common-key"), Enumerable.Range(0, 16).Select(i => (byte)i).ToArray());
+            File.WriteAllBytes(Path.Combine(dir.FullName, "sd-key"), Enumerable.Range(16, 16).Select(i => (byte)i).ToArray());
+            File.WriteAllBytes(Path.Combine(dir.FullName, "sd-iv"), Enumerable.Range(32, 16).Select(i => (byte)i).ToArray());
+            File.WriteAllBytes(Path.Combine(dir.FullName, "md5-blanker"), Enumerable.Range(48, 16).Select(i => (byte)i).ToArray());
+
+            Assert.True(WiiKeyMaterial.TryLoad(dir.FullName, out var material, out var status), status);
+            Assert.NotNull(material);
+            Assert.True(material!.HasCommonKey);
+            Assert.True(material.HasSdKeySet);
+            Assert.Contains("common key", status);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WiiKeyMaterial_RealArchiveSmoke_WhenConfigured()
+    {
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WII_KEYS");
+        if (string.IsNullOrWhiteSpace(keyPath))
+        {
+            return;
+        }
+
+        Assert.True(WiiKeyMaterial.TryLoad(keyPath, out var material, out var status), status);
+        Assert.NotNull(material);
+        Assert.True(material!.HasCommonKey);
+        Assert.True(material.HasSdKeySet);
+    }
+
+    [Fact]
     public void WiiUWfsInspector_RecognizesPlainHeader()
     {
         var image = new byte[0x4000];
@@ -703,6 +764,183 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoStorageImage_OpensNdsRomAndBrowsesNitroFs()
+    {
+        using var temp = new TempFile(CreateNdsNitroFsImage());
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<NdsRomVolume>(partition.GenericVolume);
+        var entry = Assert.Single(volume.GetRoot());
+
+        Assert.Equal("HELLO.TXT", entry.Name);
+        Assert.Equal("Nintendo DS NitroFS", volume.FamilyText);
+        Assert.Equal(5, entry.Length);
+
+        using var output = TempFile.Empty();
+        volume.CopyFile(entry, output.Path);
+        Assert.Equal(Encoding.ASCII.GetBytes("hello"), File.ReadAllBytes(output.Path));
+    }
+
+    [Fact]
+    public void NintendoStorageImage_Opens3dsNcsdPartitions()
+    {
+        using var temp = new TempFile(Create3dsNcsdImage());
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+
+        Assert.Equal("NCSD partition 0", partition.Name);
+        Assert.Equal("Nintendo 3DS NCSD", volume.FamilyText);
+        Assert.Contains("3DS NCSD partition detected", partition.Status);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_3dsFat16RealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_FAT_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<Fat16Volume>(partition.GenericVolume);
+
+        Assert.NotEmpty(volume.GetRoot());
+        Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
+        var file = Walk(volume.GetRoot()).FirstOrDefault(entry => !entry.IsDirectory && entry.Length > 0 && entry.Length <= 1024 * 1024);
+        Assert.NotNull(file);
+
+        using var output = TempFile.Empty();
+        volume.CopyFile(file!, output.Path);
+        Assert.Equal(file!.Length, new FileInfo(output.Path).Length);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_DsiNandRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DSI_NAND_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+
+        Assert.NotEmpty(storage.Partitions);
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume?.FamilyText == "Nintendo DSi NAND");
+        var volume = storage.Partitions.First(partition => partition.GenericVolume?.FamilyText == "Nintendo DSi NAND").GenericVolume!;
+        Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
+
+        var carver = new GenericFileCarver(imagePath, volume.Offset, Math.Min(volume.Length, 64L * 1024 * 1024), volume.Offset, 0x1000, volume.Name, ScanProfile.Fast);
+        Assert.NotNull(carver.Analyze(CancellationToken.None, null));
+    }
+
+    [Fact]
+    public void NintendoStorageImage_WiiUDevKitHddZipSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WIIU_DEV_HDD_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath, allowRawWiiUCandidate: true);
+
+        Assert.NotEmpty(storage.Partitions);
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume?.FamilyText == "Nintendo Wii U WFS");
+        Assert.Contains(storage.Partitions, partition => partition.Status.Contains("Wii U", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void NintendoStorageImage_WiiUMlcRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WIIU_MLC_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WIIU_KEYS");
+        if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(keyPath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath, keyPath: keyPath);
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<WiiUWfsVolume>(partition.GenericVolume);
+
+        Assert.True(volume.HasMlcKey);
+        Assert.Contains(volume.GetRoot(), entry => entry.Name.Equals("sys", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(volume.GetRoot(), entry => entry.Name.Equals("usr", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
+
+        var carver = new GenericFileCarver(imagePath, volume.Offset, Math.Min(volume.Length, 128L * 1024 * 1024), volume.Offset, 0x1000, volume.Name, ScanProfile.Fast);
+        Assert.NotNull(carver.Analyze(CancellationToken.None, null));
+
+        var file = Walk(volume.GetRoot())
+            .FirstOrDefault(entry => !entry.IsDirectory && entry.Length > 0 && entry.Length <= 1024 * 1024);
+        Assert.NotNull(file);
+
+        using var output = TempFile.Empty();
+        volume.CopyFile(file!, output.Path);
+        Assert.Equal(file!.Length, new FileInfo(output.Path).Length);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_WiiRvtHImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WII_RVTH_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+
+        Assert.NotEmpty(storage.Partitions);
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume?.FamilyText == "Nintendo Wii RVT-H");
+    }
+
+    [Fact]
+    public void NintendoStorageImage_WiiNandRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WII_NAND_IMAGE");
+        var keyPath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_WII_NAND_KEYS");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath, keyPath: keyPath);
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<WiiNandVolume>(partition.GenericVolume);
+
+        Assert.True(volume.HasNandKey);
+        Assert.NotEmpty(volume.GetRoot());
+        Assert.Contains(volume.GetRoot(), entry => entry.Name.Equals("title", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
+        var carver = new GenericFileCarver(imagePath, volume.Offset, Math.Min(volume.Length, 128L * 1024 * 1024), volume.Offset, 0x1000, volume.Name, ScanProfile.Fast);
+        Assert.NotNull(carver.Analyze(CancellationToken.None, null));
+
+        var sysconf = Walk(volume.GetRoot()).FirstOrDefault(entry => entry.Path.Equals("/shared2/sys/SYSCONF", StringComparison.OrdinalIgnoreCase));
+        if (sysconf != null)
+        {
+            using var output = TempFile.Empty();
+            volume.CopyFile(sysconf, output.Path);
+            var bytes = File.ReadAllBytes(output.Path);
+            Assert.Equal(sysconf.Length, bytes.Length);
+            Assert.Contains("IPL.", Encoding.ASCII.GetString(bytes));
+        }
+        else
+        {
+            var file = Walk(volume.GetRoot()).First(entry => !entry.IsDirectory && entry.Length > 0 && entry.Length <= 1024 * 1024);
+            using var output = TempFile.Empty();
+            volume.CopyFile(file, output.Path);
+            Assert.Equal(file.Length, new FileInfo(output.Path).Length);
+        }
+    }
+
+    [Fact]
     public void Ps2StorageImage_OpensApaPartitionTable()
     {
         using var temp = new TempFile(CreatePs2ApaImage());
@@ -714,13 +952,49 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
-    public void GenericCarver_DetectsWiiWiiUAndPs2StorageMarkers()
+    public void Ps2StorageImage_RealImageMountsPfsAndRunsRecoveryScans_WhenConfigured()
     {
-        var image = new byte[0x9000];
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PS2_E2E_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = Ps2StorageImage.Open(imagePath);
+        var pfsPartitions = storage.Partitions
+            .Where(partition => partition.GenericVolume?.FamilyText == "PlayStation 2 APA/PFS")
+            .ToList();
+
+        Assert.NotEmpty(pfsPartitions);
+        Assert.Contains(pfsPartitions, partition => partition.GenericVolume!.GetRoot().Count > 0);
+
+        var mounted = pfsPartitions.First(partition => partition.GenericVolume!.GetRoot().Count > 0).GenericVolume!;
+        var deletedRows = mounted.ScanDeleted(CancellationToken.None, null);
+        Assert.NotNull(deletedRows);
+
+        var carver = new GenericFileCarver(
+            imagePath,
+            mounted.Offset,
+            Math.Min(mounted.Length, 256L * 1024 * 1024),
+            mounted.Offset,
+            0x100000,
+            mounted.Name,
+            ScanProfile.Fast);
+        var carvedRows = carver.Analyze(CancellationToken.None, null);
+        Assert.NotNull(carvedRows);
+    }
+
+    [Fact]
+    public void GenericCarver_DetectsWiiWiiUHandheldAndPs2StorageMarkers()
+    {
+        var image = new byte[0xD000];
         BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x18), 0x5D1C9EA3);
         Encoding.ASCII.GetBytes("WBFS").CopyTo(image.AsSpan(0x2000));
         Encoding.ASCII.GetBytes("WFS").CopyTo(image.AsSpan(0x4000));
         BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x6004), 0x00415041);
+        CreateNdsNitroFsImage().CopyTo(image.AsSpan(0x7000));
+        Encoding.ASCII.GetBytes("NCSD").CopyTo(image.AsSpan(0xA100));
+        Encoding.ASCII.GetBytes("NCCH").CopyTo(image.AsSpan(0xC100));
 
         using var temp = new TempFile(image);
         var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "console image", ScanProfile.Balanced);
@@ -729,6 +1003,9 @@ bis_key_02_tweak = 88887777666655554444333322221111
         Assert.Contains(rows, row => row.Kind == "ISO" && row.Detail.Contains("Nintendo Wii"));
         Assert.Contains(rows, row => row.Kind == "WBFS");
         Assert.Contains(rows, row => row.Kind == "WFS");
+        Assert.Contains(rows, row => row.Kind == "NDS");
+        Assert.Contains(rows, row => row.Kind == "3DS");
+        Assert.Contains(rows, row => row.Kind == "CXI");
         Assert.Contains(rows, row => row.Kind == "PS2HDD");
     }
 
@@ -953,6 +1230,51 @@ bis_key_02_tweak = 88887777666655554444333322221111
         return image;
     }
 
+    private static byte[] CreateFat16Image(bool includeDeletedEntry = false)
+    {
+        var image = new byte[16 * 512];
+        var boot = image.AsSpan(0, 512);
+        Encoding.ASCII.GetBytes("MSDOS5.0").CopyTo(boot[3..]);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[11..], 512);
+        boot[13] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[14..], 1);
+        boot[16] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[17..], 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[19..], 16);
+        boot[21] = 0xF8;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[22..], 1);
+        Encoding.ASCII.GetBytes("FAT16   ").CopyTo(boot[54..]);
+        boot[510] = 0x55;
+        boot[511] = 0xAA;
+
+        var fat = image.AsSpan(512, 512);
+        BinaryPrimitives.WriteUInt16LittleEndian(fat[0..], 0xFFF8);
+        BinaryPrimitives.WriteUInt16LittleEndian(fat[2..], 0xFFFF);
+        BinaryPrimitives.WriteUInt16LittleEndian(fat[4..], 0xFFFF);
+        BinaryPrimitives.WriteUInt16LittleEndian(fat[6..], 0xFFFF);
+
+        var root = image.AsSpan(1024, 512);
+        var entry = root[..32];
+        Encoding.ASCII.GetBytes("HELLO   TXT").CopyTo(entry);
+        entry[11] = 0x20;
+        BinaryPrimitives.WriteUInt16LittleEndian(entry[26..], 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[28..], 5);
+        Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan(1536, 5));
+
+        if (includeDeletedEntry)
+        {
+            var deleted = root.Slice(32, 32);
+            Encoding.ASCII.GetBytes("OLD     BIN").CopyTo(deleted);
+            deleted[0] = 0xE5;
+            deleted[11] = 0x20;
+            BinaryPrimitives.WriteUInt16LittleEndian(deleted[26..], 3);
+            BinaryPrimitives.WriteUInt32LittleEndian(deleted[28..], 4);
+            Encoding.ASCII.GetBytes("old!").CopyTo(image.AsSpan(2048, 4));
+        }
+
+        return image;
+    }
+
     private static byte[] CreateExFatImageWithMultiClusterDirectory()
     {
         var image = new byte[6 * 512];
@@ -1083,6 +1405,48 @@ bis_key_02_tweak = 88887777666655554444333322221111
         var image = new byte[0x40000];
         WritePs2ApaHeader(image.AsSpan(0), "__mbr", startSector: 0, lengthSectors: 0x80, nextSector: 0x80, type: 0);
         WritePs2ApaHeader(image.AsSpan(0x80 * 512), "PP.TEST", startSector: 0x80, lengthSectors: 0x100, nextSector: 0, type: 0x0100);
+        return image;
+    }
+
+    private static byte[] CreateNdsNitroFsImage()
+    {
+        var image = new byte[0x1000];
+        Encoding.ASCII.GetBytes("TEST ROM    ").CopyTo(image.AsSpan(0x00));
+        Encoding.ASCII.GetBytes("ABCD").CopyTo(image.AsSpan(0x0C));
+        Encoding.ASCII.GetBytes("01").CopyTo(image.AsSpan(0x10));
+
+        const uint fntOffset = 0x200;
+        const uint fntSize = 0x20;
+        const uint fatOffset = 0x300;
+        const uint fatSize = 0x08;
+        const uint dataOffset = 0x400;
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x40), fntOffset);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x44), fntSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x48), fatOffset);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x4C), fatSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x80), (uint)image.Length);
+
+        var fnt = image.AsSpan((int)fntOffset, (int)fntSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(fnt[0..], 8);
+        BinaryPrimitives.WriteUInt16LittleEndian(fnt[4..], 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(fnt[6..], 1);
+        fnt[8] = 9;
+        Encoding.ASCII.GetBytes("HELLO.TXT").CopyTo(fnt[9..]);
+        fnt[18] = 0;
+
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan((int)fatOffset), dataOffset);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan((int)fatOffset + 4), dataOffset + 5);
+        Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan((int)dataOffset));
+        return image;
+    }
+
+    private static byte[] Create3dsNcsdImage()
+    {
+        var image = new byte[0x5000];
+        Encoding.ASCII.GetBytes("NCSD").CopyTo(image.AsSpan(0x100));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x120), 0x10);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x124), 0x10);
+        Encoding.ASCII.GetBytes("NCCH").CopyTo(image.AsSpan(0x2100));
         return image;
     }
 
@@ -1279,6 +1643,18 @@ bis_key_02_tweak = 88887777666655554444333322221111
         {
             yield return entry;
             foreach (var child in WalkPlayStationEntries(entry.Children))
+            {
+                yield return child;
+            }
+        }
+    }
+
+    private static IEnumerable<GenericFileSystemEntry> Walk(IEnumerable<GenericFileSystemEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            yield return entry;
+            foreach (var child in Walk(entry.Children))
             {
                 yield return child;
             }
