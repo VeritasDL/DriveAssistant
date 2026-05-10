@@ -1009,7 +1009,7 @@ bis_key_02_tweak = 88887777666655554444333322221111
         var temporaryPaths = new List<string>();
         try
         {
-            Assert.True(NintendoNandCrypto.TryOpenDsiNand(imagePath, partitions, temporaryPaths, out var status), status);
+            Assert.True(NintendoNandCrypto.TryOpenDsiNand(imagePath, keyPath: null, partitions, temporaryPaths, out var status), status);
             Assert.Contains(partitions, partition => partition.GenericVolume is Fat16Volume or Fat32Volume);
         }
         finally
@@ -1022,6 +1022,54 @@ bis_key_02_tweak = 88887777666655554444333322221111
                 }
             }
         }
+    }
+
+    [Fact]
+    public void NintendoStorageImage_DsiNandMountsRawKeyFolderWithoutFooter()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var imagePath = Path.Combine(directory.FullName, "dsi-nand.bin");
+            var keyDirectory = Directory.CreateDirectory(Path.Combine(directory.FullName, "keys"));
+            var consoleId = Convert.FromHexString("5345445543454D45");
+            var cid = Convert.FromHexString("576879446F657344536945786973743F");
+            File.WriteAllBytes(Path.Combine(keyDirectory.FullName, "console_id.bin"), consoleId);
+            File.WriteAllBytes(Path.Combine(keyDirectory.FullName, "nand_cid.mem"), cid);
+
+            CreateFooterlessDsiNandImage(imagePath, consoleId, cid, counter: null, useDefaultMbr: false);
+            using var storage = NintendoStorageImage.Open(imagePath, keyPath: keyDirectory.FullName);
+
+            var partition = Assert.Single(storage.Partitions);
+            var volume = Assert.IsType<Fat16Volume>(partition.GenericVolume);
+            Assert.NotEmpty(volume.GetRoot());
+            Assert.Contains("DSi NAND FAT", partition.Status);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NintendoNandCrypto_DsiCounterCanBeRecoveredWithoutCid()
+    {
+        using var temp = TempFile.Empty();
+        var consoleId = Convert.FromHexString("5345445543454D45");
+        var key = CreateDsiRetailKey(consoleId);
+        var expectedCounter = (UInt128)0x12345678;
+        var header = new byte[0x200];
+        Convert.FromHexString("1804060FE03B77080000896F06000002").CopyTo(header.AsSpan(0x1C0));
+        Convert.FromHexString("CE3C060FE0BE4D780600B30501000002").CopyTo(header.AsSpan(0x1D0));
+        EncryptTwlInPlace(header, 0, key, expectedCounter);
+        File.WriteAllBytes(temp.Path, header);
+
+        using var stream = new FileStream(temp.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var method = typeof(NintendoNandCrypto).GetMethod("TryGenerateDsiCounter", BindingFlags.Static | BindingFlags.NonPublic)!;
+        object?[] args = [stream, key, null];
+
+        Assert.True((bool)method.Invoke(null, args)!);
+        Assert.Equal(expectedCounter, Assert.IsType<UInt128>(args[2]));
     }
 
     [Fact]
@@ -2237,6 +2285,92 @@ FILE "gamedata.bin" BINARY
         }
 
         return raw;
+    }
+
+    private static void CreateFooterlessDsiNandImage(string imagePath, byte[] consoleId, byte[] cid, UInt128? counter, bool useDefaultMbr)
+    {
+        const long dsiTrimmedNandSize = 240L * 1024 * 1024;
+        const long testPartitionOffset = 0x100000;
+        var key = CreateDsiRetailKey(consoleId);
+        var baseCounter = counter ?? ReadUInt128Little(SHA1.HashData(cid).AsSpan(0, 0x10));
+        var fat = CreateFat16Image();
+        var header = new byte[0x200];
+        if (useDefaultMbr)
+        {
+            Convert.FromHexString("1804060FE03B77080000896F06000002").CopyTo(header.AsSpan(0x1C0));
+            Convert.FromHexString("CE3C060FE0BE4D780600B30501000002").CopyTo(header.AsSpan(0x1D0));
+            header[0x1FE] = 0x55;
+            header[0x1FF] = 0xAA;
+        }
+        else
+        {
+            var entry = header.AsSpan(0x1BE, 0x10);
+            entry[4] = 0x06;
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[8..], (uint)(testPartitionOffset / 512));
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[12..], (uint)(fat.Length / 512));
+            header[0x1FE] = 0x55;
+            header[0x1FF] = 0xAA;
+        }
+
+        EncryptTwlInPlace(header, 0, key, baseCounter);
+        EncryptTwlInPlace(fat, testPartitionOffset, key, baseCounter);
+        using var output = new FileStream(imagePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        output.SetLength(dsiTrimmedNandSize);
+        output.Position = 0;
+        output.Write(header);
+        output.Position = useDefaultMbr ? 0x10EE00 : testPartitionOffset;
+        output.Write(fat);
+    }
+
+    private static byte[] CreateDsiRetailKey(byte[] consoleId)
+    {
+        var method = typeof(NintendoNandCrypto).GetMethod("TryCreateDsiKey", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var keyY = typeof(NintendoNandCrypto).GetField("DsiRetailTwlKeyY", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        object?[] args = [consoleId, keyY, null];
+
+        Assert.True((bool)method.Invoke(null, args)!);
+        return Assert.IsType<byte[]>(args[2]);
+    }
+
+    private static void EncryptTwlInPlace(byte[] data, long sourceOffset, byte[] key, UInt128 baseCounter)
+    {
+        using var aes = Aes.Create();
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+        using var encryptor = aes.CreateEncryptor(key, null);
+        Span<byte> counterBlock = stackalloc byte[16];
+        Span<byte> block = stackalloc byte[16];
+        var keyStream = new byte[16];
+        var counter = baseCounter + (UInt128)((ulong)sourceOffset / 16);
+        for (var offset = 0; offset < data.Length; offset += 16)
+        {
+            WriteUInt128Big(counterBlock, counter);
+            encryptor.TransformBlock(counterBlock.ToArray(), 0, 16, keyStream, 0);
+            for (var index = 0; index < 16; index++)
+            {
+                block[index] = (byte)(data[offset + 15 - index] ^ keyStream[index]);
+            }
+
+            for (var index = 0; index < 16; index++)
+            {
+                data[offset + index] = block[15 - index];
+            }
+
+            counter++;
+        }
+    }
+
+    private static UInt128 ReadUInt128Little(ReadOnlySpan<byte> data)
+    {
+        var low = BinaryPrimitives.ReadUInt64LittleEndian(data[..8]);
+        var high = BinaryPrimitives.ReadUInt64LittleEndian(data[8..16]);
+        return ((UInt128)high << 64) | low;
+    }
+
+    private static void WriteUInt128Big(Span<byte> destination, UInt128 value)
+    {
+        BinaryPrimitives.WriteUInt64BigEndian(destination[..8], (ulong)(value >> 64));
+        BinaryPrimitives.WriteUInt64BigEndian(destination[8..16], (ulong)value);
     }
 
     private static byte[] CreateSgiEfsImage()

@@ -117,7 +117,7 @@ internal sealed class NintendoStorageImage : IDisposable
         }
         else if (LooksLikeDsiNand(length))
         {
-            if (!NintendoNandCrypto.TryOpenDsiNand(activePath, partitions, temporaryPartitionPaths, out _))
+            if (!NintendoNandCrypto.TryOpenDsiNand(activePath, keyPath, partitions, temporaryPartitionPaths, out _))
             {
                 AddDsiNandPartitions(activePath, length, partitions);
             }

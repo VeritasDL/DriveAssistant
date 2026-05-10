@@ -27,38 +27,31 @@ internal static class NintendoNandCrypto
     private static readonly UInt128 CtrScramblerConstant = ParseUInt128("1FF9E9AAC5FE0408024591DC5D52768A");
     private static readonly byte[] OtpMagic = [0x0F, 0xB0, 0xAD, 0xDE];
 
-    public static bool TryOpenDsiNand(string sourcePath, List<PartitionModel> partitions, List<string> temporaryPaths, out string status)
+    public static bool TryOpenDsiNand(string sourcePath, string? keyPath, List<PartitionModel> partitions, List<string> temporaryPaths, out string status)
     {
         status = string.Empty;
         try
         {
             var length = new FileInfo(sourcePath).Length;
-            if (length < DsiMinimumNandSize || ((ulong)length & DsiFooterSizeFlag) != DsiFooterSizeFlag)
+            if (length < DsiMinimumNandSize)
             {
-                status = "DSi NAND image does not have a No$GBA footer-sized length.";
+                status = "DSi NAND image is smaller than the expected raw NAND size.";
                 return false;
             }
 
             using var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
-            var footer = new byte[0x40];
-            if (!GenericFileSystemImage.ReadExactly(stream, length - footer.Length, footer)
-                || !footer.AsSpan(0, DsiNoCashFooterMagic.Length).SequenceEqual(DsiNoCashFooterMagic))
+            if (!TryLoadDsiKeyMaterial(sourcePath, keyPath, stream, length, out var keyMaterial, out status))
             {
-                status = "DSi No$GBA footer magic was not found.";
                 return false;
             }
 
-            var cid = footer.AsSpan(0x10, 0x10).ToArray();
-            var consoleId = footer.AsSpan(0x20, 0x08).ToArray();
-            Array.Reverse(consoleId);
-
-            if (!TryCreateDsiKey(consoleId, DsiRetailTwlKeyY, out var key)
-                || !TryReadDsiMbr(stream, key, cid, out var baseCounter, out var partitionRows))
+            if (!TryCreateDsiKey(keyMaterial.ConsoleId, DsiRetailTwlKeyY, out var key)
+                || !TryReadDsiMbr(stream, key, keyMaterial.Cid, out var baseCounter, out var partitionRows, out var counterSource))
             {
-                if (!TryCreateDsiKey(consoleId, DsiDevTwlKeyY, out key)
-                    || !TryReadDsiMbr(stream, key, cid, out baseCounter, out partitionRows))
+                if (!TryCreateDsiKey(keyMaterial.ConsoleId, DsiDevTwlKeyY, out key)
+                    || !TryReadDsiMbr(stream, key, keyMaterial.Cid, out baseCounter, out partitionRows, out counterSource))
                 {
-                    status = "DSi No$GBA footer was read, but decrypted MBR validation failed.";
+                    status = "DSi key material was read, but decrypted MBR validation failed. Check that console_id and NAND CID match this NAND image.";
                     return false;
                 }
             }
@@ -89,7 +82,7 @@ internal static class NintendoNandCrypto
                 return false;
             }
 
-            status = $"Mounted {mounted:N0} decrypted DSi NAND FAT partition(s) from No$GBA footer key material.";
+            status = $"Mounted {mounted:N0} decrypted DSi NAND FAT partition(s) from {keyMaterial.SourceDescription}; {counterSource}.";
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or CryptographicException or OverflowException or ArgumentException)
@@ -235,9 +228,24 @@ internal static class NintendoNandCrypto
         return true;
     }
 
-    private static bool TryReadDsiMbr(FileStream stream, byte[] key, byte[] cid, out UInt128 counter, out IReadOnlyList<(long Offset, long Length)> partitions)
+    private static bool TryReadDsiMbr(FileStream stream, byte[] key, byte[]? cid, out UInt128 counter, out IReadOnlyList<(long Offset, long Length)> partitions, out string counterSource)
     {
-        counter = ReadUInt128Little(SHA1.HashData(cid).AsSpan(0, 0x10));
+        counterSource = string.Empty;
+        if (cid is { Length: 0x10 })
+        {
+            counter = ReadUInt128Little(SHA1.HashData(cid).AsSpan(0, 0x10));
+            counterSource = "counter generated from NAND CID";
+        }
+        else if (!TryGenerateDsiCounter(stream, key, out counter))
+        {
+            partitions = [];
+            return false;
+        }
+        else
+        {
+            counterSource = "counter recovered from known DSi NAND header blocks";
+        }
+
         partitions = [];
         var header = DecryptRange(stream, 0, SectorSize, key, counter, twlMode: true);
         var mbr = header.AsSpan(0x1BE, 0x42);
@@ -248,6 +256,81 @@ internal static class NintendoNandCrypto
 
         partitions = ReadMbrPartitions(mbr);
         return true;
+    }
+
+    private static bool TryLoadDsiKeyMaterial(string sourcePath, string? keyPath, FileStream stream, long length, out DsiKeyMaterial material, out string status)
+    {
+        material = new DsiKeyMaterial([], null, string.Empty);
+        status = string.Empty;
+        if (((ulong)length & DsiFooterSizeFlag) == DsiFooterSizeFlag)
+        {
+            var footer = new byte[0x40];
+            if (GenericFileSystemImage.ReadExactly(stream, length - footer.Length, footer)
+                && footer.AsSpan(0, DsiNoCashFooterMagic.Length).SequenceEqual(DsiNoCashFooterMagic)
+                && footer.AsSpan(0x10, 0x30).ToArray().Distinct().Count() > 1)
+            {
+                var cid = footer.AsSpan(0x10, 0x10).ToArray();
+                var consoleId = footer.AsSpan(0x20, 0x08).ToArray();
+                Array.Reverse(consoleId);
+                material = new DsiKeyMaterial(consoleId, cid, "No$GBA footer key material");
+                return true;
+            }
+        }
+
+        if (TryLoadDsiSidecarKeyMaterial(sourcePath, keyPath, out material, out status))
+        {
+            return true;
+        }
+
+        status = "DSi NAND browsing needs a No$GBA footer or a key folder containing console_id.bin/mem/hex. nand_cid.mem/bin is optional; without it Drive Assistant recovers the counter from known DSi header blocks.";
+        return false;
+    }
+
+    private static bool TryLoadDsiSidecarKeyMaterial(string sourcePath, string? keyPath, out DsiKeyMaterial material, out string status)
+    {
+        material = new DsiKeyMaterial([], null, string.Empty);
+        status = string.Empty;
+        foreach (var directory in EnumerateExistingDirectories(Path.GetDirectoryName(sourcePath), File.Exists(keyPath) ? Path.GetDirectoryName(keyPath) : keyPath))
+        {
+            var consolePath = FindFirst(directory, "console_id.bin", "console_id.mem", "consoleid.bin", "consoleid.mem", "ConsoleID.bin", "ConsoleID.mem", "dsi_console_id.bin", "dsi_console_id.mem", "twl_console_id.bin", "twl_console_id.mem");
+            if (consolePath == null || !TryReadKeyBytes(consolePath, 8, allowLongerBinary: true, out var consoleId))
+            {
+                continue;
+            }
+
+            byte[]? cid = null;
+            var cidPath = FindFirst(directory, "nand_cid.mem", "nand_cid.bin", "emmc_cid.mem", "emmc_cid.bin", "cid.mem", "cid.bin");
+            if (cidPath != null)
+            {
+                TryReadKeyBytes(cidPath, 16, allowLongerBinary: false, out cid);
+            }
+
+            material = new DsiKeyMaterial(consoleId, cid, $"sidecar key material in {directory}");
+            return true;
+        }
+
+        status = "No DSi console_id sidecar file was found.";
+        return false;
+    }
+
+    private static bool TryGenerateDsiCounter(FileStream stream, byte[] key, out UInt128 counter)
+    {
+        counter = 0;
+        Span<byte> header = stackalloc byte[SectorSize];
+        if (!GenericFileSystemImage.ReadExactly(stream, 0, header))
+        {
+            return false;
+        }
+
+        var block = ReadUInt128Big(header.Slice(0x1C0, 0x10)) ^ ParseUInt128("1804060FE03B77080000896F06000002");
+        Span<byte> blockBytes = stackalloc byte[AesBlockSize];
+        WriteUInt128Little(blockBytes, block);
+        var offsetCounter = ReadUInt128Big(DecryptEcbBlock(key, blockBytes));
+        counter = offsetCounter - 0x1C;
+
+        var check = header.Slice(0x1D0, 0x10).ToArray();
+        DecryptInPlace(check, 0x1D0, key, counter, twlMode: true);
+        return check.SequenceEqual(Convert.FromHexString("CE3C060FE0BE4D780600B30501000002"));
     }
 
     private static List<NcsdPartitionRow> ReadNcsdPartitions(ReadOnlySpan<byte> header)
@@ -487,6 +570,15 @@ internal static class NintendoNandCrypto
         return output;
     }
 
+    private static byte[] DecryptEcbBlock(byte[] key, ReadOnlySpan<byte> block)
+    {
+        using var aes = Aes.Create();
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+        using var decryptor = aes.CreateDecryptor(key, null);
+        return decryptor.TransformFinalBlock(block.ToArray(), 0, AesBlockSize);
+    }
+
     private static byte[] KeygenTwl(UInt128 keyX, UInt128 keyY)
     {
         return WriteUInt128Big(Rol((keyX ^ keyY) + TwlScramblerConstant, 42));
@@ -530,6 +622,12 @@ internal static class NintendoNandCrypto
         BinaryPrimitives.WriteUInt64BigEndian(destination[8..16], (ulong)value);
     }
 
+    private static void WriteUInt128Little(Span<byte> destination, UInt128 value)
+    {
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[..8], (ulong)value);
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[8..16], (ulong)(value >> 64));
+    }
+
     private static UInt128 ParseUInt128(string hex)
     {
         var bytes = Convert.FromHexString(hex);
@@ -540,6 +638,61 @@ internal static class NintendoNandCrypto
     {
         return Path.Combine(Path.GetTempPath(), $"drive-assistant-{prefix}-{Guid.NewGuid():N}{extension}");
     }
+
+    private static string? FindFirst(string directory, params string[] patterns)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        foreach (var pattern in patterns)
+        {
+            var path = Path.Combine(directory, pattern);
+            if (!pattern.Contains('*') && File.Exists(path))
+            {
+                return path;
+            }
+
+            var match = Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly).FirstOrDefault();
+            if (match != null)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadKeyBytes(string path, int expectedLength, bool allowLongerBinary, out byte[] key)
+    {
+        key = [];
+        var data = File.ReadAllBytes(path);
+        if (data.Length == expectedLength || allowLongerBinary && data.Length > expectedLength)
+        {
+            key = data.AsSpan(0, expectedLength).ToArray();
+            return true;
+        }
+
+        var text = Encoding.ASCII.GetString(data)
+            .Replace("0x", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace(":", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", string.Empty, StringComparison.Ordinal)
+            .Replace("\t", string.Empty, StringComparison.Ordinal)
+            .Trim();
+        if (text.Length < expectedLength * 2 || text.Any(ch => !Uri.IsHexDigit(ch)))
+        {
+            return false;
+        }
+
+        key = Convert.FromHexString(text[..(expectedLength * 2)]);
+        return true;
+    }
+
+    private sealed record DsiKeyMaterial(byte[] ConsoleId, byte[]? Cid, string SourceDescription);
 
     private sealed record NcsdPartitionRow(int FsType, int CryptType, long Offset, long Length);
 
@@ -694,27 +847,7 @@ internal static class NintendoNandCrypto
 
         private static string? FindFirst(string directory, params string[] patterns)
         {
-            if (!Directory.Exists(directory))
-            {
-                return null;
-            }
-
-            foreach (var pattern in patterns)
-            {
-                var path = Path.Combine(directory, pattern);
-                if (!pattern.Contains('*') && File.Exists(path))
-                {
-                    return path;
-                }
-
-                var match = Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly).FirstOrDefault();
-                if (match != null)
-                {
-                    return match;
-                }
-            }
-
-            return null;
+            return NintendoNandCrypto.FindFirst(directory, patterns);
         }
     }
 }
