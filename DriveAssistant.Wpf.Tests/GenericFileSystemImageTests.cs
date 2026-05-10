@@ -957,6 +957,26 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoNandCrypto_LoadsCtrNandKeyYsFromBoot9Layout()
+    {
+        var keyblob = new byte[0x400];
+        var keyYStart = 0x170 + 16 * 4 + 16 * 4;
+        for (var keyslot = 0; keyslot < 4; keyslot++)
+        {
+            Enumerable.Repeat((byte)(0x40 + keyslot), 16).ToArray().CopyTo(keyblob.AsSpan(keyYStart + keyslot * 16));
+        }
+
+        var materialType = typeof(NintendoNandCrypto).GetNestedType("Nintendo3dsKeyMaterial", BindingFlags.NonPublic)!;
+        var method = materialType.GetMethod("LoadBoot9KeyY", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var keys = Assert.IsType<Dictionary<int, byte[]>>(method.Invoke(null, [keyblob]));
+
+        Assert.Equal(Enumerable.Repeat((byte)0x40, 16), keys[0x04]);
+        Assert.Equal(Enumerable.Repeat((byte)0x41, 16), keys[0x05]);
+        Assert.Equal(Enumerable.Repeat((byte)0x42, 16), keys[0x06]);
+        Assert.Equal(Enumerable.Repeat((byte)0x43, 16), keys[0x07]);
+    }
+
+    [Fact]
     public void NintendoStorageImage_DsiNandRealImageSmoke_WhenConfigured()
     {
         var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DSI_NAND_IMAGE");

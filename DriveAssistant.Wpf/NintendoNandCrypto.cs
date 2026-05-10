@@ -659,11 +659,11 @@ internal static class NintendoNandCrypto
         {
             var result = new Dictionary<int, byte[]>();
             var offset = 0x170;
-            offset += 16 * 4;
-            offset += 16 * 4;
-            offset += 16 * 4;
-            offset += 16 * 4;
-            offset += 16 * 4;
+            offset += 16;      // KeyX 0x2C..0x2F share one value.
+            offset += 16;      // KeyX 0x30..0x33 share one value.
+            offset += 16;      // KeyX 0x34..0x37 share one value.
+            offset += 16;      // KeyX 0x38..0x3B share one value.
+            offset += 16 * 4;  // KeyX 0x3C..0x3F are four independent values.
             for (var keyslot = 0x04; keyslot < 0x08; keyslot++)
             {
                 result[keyslot] = keyblob.AsSpan(offset, 16).ToArray();
