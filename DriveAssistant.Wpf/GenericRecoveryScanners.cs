@@ -309,6 +309,7 @@ public sealed class GenericFileCarver
                ?? TryMatchNintendoLegacy(header, remainingLength)
                ?? TryMatchNintendoHandheld(header, remainingLength)
                ?? TryMatchPlayStation2(header, remainingLength)
+               ?? TryMatchLegacyDevkitMedia(header, remainingLength)
                ?? TryMatchNintendoSwitch(header, stream, absoluteOffset, remainingLength)
                ?? TryMatchCommon(header, stream, absoluteOffset, remainingLength);
     }
@@ -698,7 +699,7 @@ public sealed class GenericFileCarver
 
             if (magic == 0xC2339F3D)
             {
-                return new GenericCarverMatch(string.Empty, ".iso", EstimateUnknownSize(remainingLength), "Nintendo GameCube optical disc image");
+                return new GenericCarverMatch(string.Empty, ".gcm", EstimateUnknownSize(remainingLength), "Nintendo GameCube/Dolphin development optical disc image");
             }
         }
 
@@ -789,6 +790,52 @@ public sealed class GenericFileCarver
         }
 
         return null;
+    }
+
+    private static GenericCarverMatch? TryMatchLegacyDevkitMedia(ReadOnlySpan<byte> header, long remainingLength)
+    {
+        if (header.Length >= 2 && header[0] == (byte)'M' && header[1] == (byte)'C' && remainingLength >= 128 * 1024)
+        {
+            return new GenericCarverMatch(string.Empty, ".mcr", Math.Min(128 * 1024, remainingLength), "Sony PlayStation DTL/PS1 memory-card image");
+        }
+
+        if (header.Length >= 27 && Encoding.ASCII.GetString(header[..27]) == "Sony PS2 Memory Card Format")
+        {
+            return new GenericCarverMatch(string.Empty, ".ps2", EstimateUnknownSize(remainingLength), "Sony PlayStation 2 TOOL/TEST memory-card image");
+        }
+
+        if (header.Length >= 16 && Encoding.ASCII.GetString(header[..16]) == "SEGA SEGAKATANA ")
+        {
+            return new GenericCarverMatch("IP", ".bin", Math.Min(0x8000, remainingLength), "Sega Dreamcast Katana IP.BIN boot sector");
+        }
+
+        if (header.Length >= 4)
+        {
+            var n64Magic = ReadUInt32BigEndian(header);
+            if (n64Magic is 0x80371240 or 0x37804012 or 0x40123780)
+            {
+                return new GenericCarverMatch(string.Empty, ".z64", EstimateUnknownSize(remainingLength), "Nintendo 64 Partner-N64 ROM image");
+            }
+        }
+
+        if (LooksLikeGameBoyRom(header))
+        {
+            return new GenericCarverMatch(string.Empty, ".gb", EstimateUnknownSize(remainingLength), "Nintendo Game Boy-family development ROM image");
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeGameBoyRom(ReadOnlySpan<byte> header)
+    {
+        ReadOnlySpan<byte> logo =
+        [
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83,
+            0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E,
+            0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63,
+            0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
+        ];
+        return header.Length >= 0x134 && header.Slice(0x104, logo.Length).SequenceEqual(logo);
     }
 
     private static long TryGetSfoSize(FileStream stream, long absoluteOffset, uint keyTableStart, uint dataTableStart, uint entryCount, long remainingLength)

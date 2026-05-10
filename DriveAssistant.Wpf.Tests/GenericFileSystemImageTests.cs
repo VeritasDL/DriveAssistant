@@ -820,6 +820,35 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoStorageImage_3dsNandRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_NAND_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+
+        Assert.NotEmpty(storage.Partitions);
+        Assert.Contains(storage.Partitions, candidate => candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
+        var partition = storage.Partitions.First(candidate => candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+        Assert.Contains("Contents may be encrypted", partition.Status);
+        Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
+
+        var keyDirectory = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_NAND_KEY_DIR");
+        if (string.IsNullOrWhiteSpace(keyDirectory))
+        {
+            return;
+        }
+
+        Assert.Equal(16, new FileInfo(Path.Combine(keyDirectory, "nand_cid.mem")).Length);
+        Assert.Equal(256, new FileInfo(Path.Combine(keyDirectory, "otp.mem")).Length);
+        Assert.Equal(256, new FileInfo(Path.Combine(keyDirectory, "otp_dec.mem")).Length);
+    }
+
+    [Fact]
     public void NintendoStorageImage_DsiNandRealImageSmoke_WhenConfigured()
     {
         var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DSI_NAND_IMAGE");
@@ -1007,6 +1036,51 @@ bis_key_02_tweak = 88887777666655554444333322221111
         Assert.Contains(rows, row => row.Kind == "3DS");
         Assert.Contains(rows, row => row.Kind == "CXI");
         Assert.Contains(rows, row => row.Kind == "PS2HDD");
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_OpenRecognizesDevkitAndSaveMedia()
+    {
+        var image = new byte[128 * 1024];
+        image[0] = (byte)'M';
+        image[1] = (byte)'C';
+
+        using var temp = new TempFile(image);
+        var memoryCardPath = Path.ChangeExtension(temp.Path, ".mcr");
+        File.Copy(temp.Path, memoryCardPath, overwrite: true);
+        try
+        {
+            using var storage = LegacyConsoleStorageImage.Open(memoryCardPath);
+            var partition = Assert.Single(storage.Partitions);
+            var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+
+            Assert.Equal("Sony PlayStation memory card", volume.FamilyText);
+            Assert.Single(volume.GetRoot());
+        }
+        finally
+        {
+            File.Delete(memoryCardPath);
+        }
+    }
+
+    [Fact]
+    public void GenericCarver_DetectsLegacyDevkitMediaMarkers()
+    {
+        var image = new byte[0x25000];
+        image[0] = (byte)'M';
+        image[1] = (byte)'C';
+        Encoding.ASCII.GetBytes("SEGA SEGAKATANA ").CopyTo(image.AsSpan(0x20000));
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x21000), 0x80371240);
+        CreateGameBoyRomHeader().CopyTo(image.AsSpan(0x22000));
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "legacy devkit media", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Contains(rows, row => row.Kind == "MCR" && row.Detail.Contains("PlayStation"));
+        Assert.Contains(rows, row => row.Kind == "BIN" && row.Detail.Contains("Katana"));
+        Assert.Contains(rows, row => row.Kind == "Z64");
+        Assert.Contains(rows, row => row.Kind == "GB");
     }
 
     [Fact]
@@ -1630,6 +1704,21 @@ bis_key_02_tweak = 88887777666655554444333322221111
                       | (hour << 11)
                       | (minute << 5)
                       | (second / 2));
+    }
+
+    private static byte[] CreateGameBoyRomHeader()
+    {
+        var header = new byte[0x200];
+        byte[] logo =
+        [
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83,
+            0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E,
+            0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63,
+            0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
+        ];
+        logo.CopyTo(header.AsSpan(0x104));
+        Encoding.ASCII.GetBytes("DEVKIT").CopyTo(header.AsSpan(0x134));
+        return header;
     }
 
     private static T GetProperty<T>(object instance, string name)

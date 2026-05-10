@@ -37,6 +37,7 @@ public partial class ConsoleImageOpenWindow : Window
         new("Nintendo Switch NAND / eMMC", ConsoleDriveImageKind.NintendoSwitchNand, false),
         new("Nintendo Wii / Wii U / DS / 3DS", ConsoleDriveImageKind.NintendoWiiWiiU, false),
         new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
+        new("Legacy devkit / ROM / save media", ConsoleDriveImageKind.LegacyDevkitMedia, false),
         new("PlayStation 2 HDD", ConsoleDriveImageKind.PlayStation2Hdd, false),
         new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, false),
         new("PlayStation 4 / PlayStation 4 Pro HDD", ConsoleDriveImageKind.PlayStation4Hdd, false)
@@ -67,7 +68,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Disk Images (*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app)|*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
+            Filter = "Console Images (*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.vmu;*.vms;*.dci;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.sra;*.eep;*.fla;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app)|*.img;*.bin;*.raw;*.imgc;*.iso;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.vmu;*.vms;*.dci;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.sra;*.eep;*.fla;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
             CheckFileExists = true
         };
 
@@ -201,10 +202,11 @@ public partial class ConsoleImageOpenWindow : Window
 
         StatusTextBlock.Text = ImageKind switch
         {
-            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, Wii/Wii U/DS/3DS, PlayStation 2 APA, generic NTFS/FAT32/exFAT, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
+            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, Wii/Wii U/DS/3DS, PlayStation 2 APA, generic NTFS/FAT32/exFAT, and raw legacy/devkit media markers, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
             ConsoleDriveImageKind.NintendoSwitchNand => "Switch NAND support reads the GPT and mounts readable FAT32 BIS partitions when BIS keys are supplied.",
             ConsoleDriveImageKind.NintendoWiiWiiU => "Nintendo support detects Wii RVT-H/NAND/disc/WBFS, Wii U WFS/dev storage, Nintendo DS NitroFS ROMs, DSi NAND layouts, and 3DS NCSD/NCCH containers for read-only inspection and carving.",
             ConsoleDriveImageKind.PlayStation2Hdd => "PlayStation 2 support detects APA/PFS and HDLoader partitions for read-only inspection and carving.",
+            ConsoleDriveImageKind.LegacyDevkitMedia => "Legacy support recognizes PS1/PS2 memory-card images, Dreamcast Katana GD-ROM/VMU media, Nintendo 64 ROM/save media, and Game Boy-family ROM/save media for raw export and carving.",
             _ => "This image type does not require a key file."
         };
     }
@@ -240,7 +242,8 @@ public enum ConsoleDriveImageKind
     GenericFileSystem,
     PlayStation2Hdd,
     PlayStation3Hdd,
-    PlayStation4Hdd
+    PlayStation4Hdd,
+    LegacyDevkitMedia
 }
 
 public sealed record ConsoleImageKindOption(string Name, ConsoleDriveImageKind Kind, bool RequiresKey)

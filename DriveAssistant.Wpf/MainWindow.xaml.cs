@@ -43,6 +43,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private SwitchStorageImage? _switchStorageImage;
     private NintendoStorageImage? _nintendoStorageImage;
     private Ps2StorageImage? _ps2StorageImage;
+    private LegacyConsoleStorageImage? _legacyConsoleStorageImage;
     private DriveDatabaseSnapshot? _databaseSnapshot;
     private PartitionModel? _selectedPartition;
     private FileRow? _selectedFile;
@@ -299,7 +300,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanUnmountPartition => SelectedPartition != null && !_isOpeningImage && !_isMetadataScanRunning && !_isFileCarverRunning && !_isExportRunning;
 
-    private bool HasLoadedImage => Partitions.Count > 0 && (_drive != null || _xboxStorageImage != null || _playStationStorageImage != null || _genericFileSystemImage != null || _switchStorageImage != null || _nintendoStorageImage != null || _ps2StorageImage != null);
+    private bool HasLoadedImage => Partitions.Count > 0 && (_drive != null || _xboxStorageImage != null || _playStationStorageImage != null || _genericFileSystemImage != null || _switchStorageImage != null || _nintendoStorageImage != null || _ps2StorageImage != null || _legacyConsoleStorageImage != null);
 
     public string StatusText
     {
@@ -536,7 +537,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!IsSupportedImagePath(imagePath))
         {
-            StatusText = "Drop an .img, .imgc, .bin, .raw, .iso, .wbfs, .zip, .wud, .wux, .nds, .dsi, .3ds, .cci, .cxi, .cfa, .csu, or .app image file.";
+            StatusText = "Drop a supported disk, NAND, ROM, save, disc, or devkit image file.";
             return;
         }
 
@@ -589,6 +590,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var openedAsGeneric = await OpenGenericFileSystemImagePathAsync(imagePath);
             if (openedAsGeneric || imageKind == ConsoleDriveImageKind.GenericFileSystem)
+            {
+                return;
+            }
+        }
+
+        if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.LegacyDevkitMedia)
+        {
+            var openedAsLegacy = await OpenLegacyConsoleImagePathAsync(imagePath);
+            if (openedAsLegacy || imageKind == ConsoleDriveImageKind.LegacyDevkitMedia)
             {
                 return;
             }
@@ -992,6 +1002,64 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         showError: false);
     }
 
+    private async Task<bool> OpenLegacyConsoleImagePathAsync(string imagePath)
+    {
+        return await RunUiTaskAsync("Opening legacy console/devkit media...", () =>
+        {
+            var activeRawImagePath = Path.GetExtension(imagePath).Equals(".imgc", StringComparison.OrdinalIgnoreCase)
+                ? ImgcDecoder.DecodeToTempRawImage(imagePath)
+                : imagePath;
+            var image = LegacyConsoleStorageImage.Open(activeRawImagePath);
+            return (image, partitions: image.Partitions.ToList(), fileName: imagePath, activeRawImagePath);
+        },
+        result =>
+        {
+            _drive?.Dispose();
+            _drive = null;
+            _xboxStorageImage?.Dispose();
+            _xboxStorageImage = null;
+            _playStationStorageImage?.Dispose();
+            _playStationStorageImage = null;
+            _genericFileSystemImage?.Dispose();
+            _genericFileSystemImage = null;
+            _switchStorageImage?.Dispose();
+            _switchStorageImage = null;
+            _nintendoStorageImage?.Dispose();
+            _nintendoStorageImage = null;
+            _ps2StorageImage?.Dispose();
+            _ps2StorageImage = null;
+            _legacyConsoleStorageImage?.Dispose();
+            _legacyConsoleStorageImage = result.image;
+            ClearTemporaryScanFiles();
+            _databaseSnapshot = null;
+            _openedImagePath = result.fileName;
+            _activeRawImagePath = result.activeRawImagePath;
+            Title = $"{AppName} - {Path.GetFileName(result.fileName)}";
+            Partitions.Clear();
+            foreach (var partition in result.partitions)
+            {
+                Partitions.Add(partition);
+            }
+
+            MetadataResults.Clear();
+            CarvedFiles.Clear();
+            RecoveryTreeRoots.Clear();
+            RecoveryRows.Clear();
+            ClusterRows.Clear();
+            _recoveryDatabase = null;
+            _recoveryIntegrity = null;
+            SelectedPartition = Partitions.FirstOrDefault();
+            AddRecentImage(result.fileName);
+            AppendLog($"Opened legacy console/devkit media: {result.fileName}");
+            if (!string.Equals(result.fileName, result.activeRawImagePath, StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog($"Using decoded IMGC cache: {result.activeRawImagePath}");
+            }
+            AppendLog($"Detected legacy console/devkit regions: {Partitions.Count}");
+        },
+        showError: false);
+    }
+
     private async Task<bool> OpenPlayStationImagePathAsync(string imagePath, string keyPath, ConsoleDriveImageKind imageKind)
     {
         if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
@@ -1083,7 +1151,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static bool IsSupportedImagePath(string path)
     {
-        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".iso" or ".wbfs" or ".zip" or ".wud" or ".wux" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
+        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".raw" or ".iso" or ".wbfs" or ".zip" or ".wud" or ".wux" or ".gcm" or ".gdi" or ".cdi" or ".vmu" or ".vms" or ".dci" or ".mcr" or ".mcd" or ".psx" or ".ps2" or ".z64" or ".n64" or ".v64" or ".sra" or ".eep" or ".fla" or ".gb" or ".gbc" or ".gba" or ".sav" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
     }
 
     private void AddRecentImage(string path)
@@ -2104,7 +2172,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _closingMainWindow = true;
-        if (_drive == null && _xboxStorageImage == null && _playStationStorageImage == null && _genericFileSystemImage == null && _switchStorageImage == null && _nintendoStorageImage == null && _ps2StorageImage == null && _databaseSnapshot == null)
+        if (_drive == null && _xboxStorageImage == null && _playStationStorageImage == null && _genericFileSystemImage == null && _switchStorageImage == null && _nintendoStorageImage == null && _ps2StorageImage == null && _legacyConsoleStorageImage == null && _databaseSnapshot == null)
         {
             if (_detachedResultsWindow != null)
             {
@@ -2148,6 +2216,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _switchStorageImage?.Dispose();
         _nintendoStorageImage?.Dispose();
         _ps2StorageImage?.Dispose();
+        _legacyConsoleStorageImage?.Dispose();
     }
 
     private void ApplyWindowStatePadding()

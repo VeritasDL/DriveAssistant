@@ -23,6 +23,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | Original Xbox | FATX partition browsing, metadata recovery, export, file carving. |
 | Xbox 360 | FATX partition browsing, metadata recovery, export, XEX carving, file carving. |
 | Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, nested readable filesystem probing where possible. |
+| Legacy devkit / ROM / save media | PS1/PS2 memory-card raw media, Dreamcast Katana GD-ROM/VMU extensions, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and whole-image raw export/carving. |
 | PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
 | PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
 | PlayStation 2 | APA partition table detection for PS2 HDD images, managed PFS directory browsing/export, deleted/slack PFS metadata scanning, orphan PFS inode recovery candidates, HDLoader partition classification, raw partition export, and partition-scoped carving. |
@@ -41,6 +42,7 @@ Drive Assistant is built around practical recovery sessions rather than one-shot
 - **File carving:** scan raw regions for known signatures when metadata is missing or damaged.
 - **Photo preview:** preview common image formats from mounted files and carved results in the inspector.
 - **Nested probing:** detect readable filesystems inside supported container formats such as Xbox XVD/XVC.
+- **Devkit mapping:** track public devkit model aliases and the storage/image formats they map to in [`docs/console-devkit-models.md`](docs/console-devkit-models.md).
 - **Analysis state:** save and reopen analysis databases to continue work later.
 
 ## File Carving
@@ -64,6 +66,7 @@ Format-specific carving includes:
 - Xbox 360 XEX variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 - PS4 packages: `CNT` package headers as `PKG`, including observed type-`1` debug packages as `DPKG`.
 - PS2 storage: APA HDD partition headers and partition-scoped carving from mounted PFS volumes.
+- Legacy/devkit media: PS1 memory cards, PS2 memory cards, Dreamcast Katana `IP.BIN`, Nintendo 64 ROM images, and Game Boy-family ROM headers.
 - Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, RVT-H disc banks, Wii U WFS markers, Wii U FST markers, and WUX compressed disc images.
 - Nintendo DS / DSi / 3DS: Nintendo DS NitroFS ROMs, 3DS NCSD/CCI/NAND images, and 3DS NCCH/CXI/CFA containers.
 - Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
