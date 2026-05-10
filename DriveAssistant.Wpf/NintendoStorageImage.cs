@@ -67,7 +67,11 @@ internal sealed class NintendoStorageImage : IDisposable
         var wfsInfo = WiiUWfsInspector.Inspect(activePath, keys);
         var zipWrapped = StartsWith(header, "PK\x03\x04"u8);
 
-        if (LooksLikeWiiDisc(header))
+        if (GameCubeDiscVolume.TryOpen(activePath, length, out var gameCubeVolume, out var gameCubeStatus))
+        {
+            partitions.Add(new PartitionModel(gameCubeVolume, gameCubeStatus));
+        }
+        else if (LooksLikeWiiDisc(header))
         {
             var status = $"Mounted as raw Wii disc image; file carving and raw export are available. {wiiKeyStatus}";
             partitions.Add(CreateWholeImagePartition(activePath, length, "Nintendo Wii optical image", status));
@@ -94,7 +98,7 @@ internal sealed class NintendoStorageImage : IDisposable
         }
         else if (LooksLikeNcch(header))
         {
-            partitions.Add(CreateWholeImagePartition(activePath, length, "Nintendo 3DS NCCH", "Mounted as raw NCCH/CXI/CFA container; export and file carving are available. Encrypted sections require external keys/tools."));
+            partitions.Add(CreateNcchPartition(activePath, length, header));
         }
         else if (TryCreateRvtHPartitions(activePath, stream, length, partitions))
         {
@@ -173,6 +177,31 @@ internal sealed class NintendoStorageImage : IDisposable
         return new PartitionModel(volume, status);
     }
 
+    private static PartitionModel CreateNcchPartition(string sourcePath, long length, ReadOnlySpan<byte> header)
+    {
+        var candidate = new GenericPartitionCandidate(0, Guid.Empty, 0, length, "Nintendo 3DS NCCH", SectorSize);
+        var productCode = header.Length >= 0x150 ? ReadAscii(header.Slice(0x150, Math.Min(0x10, header.Length - 0x150))) : string.Empty;
+        var programId = header.Length >= 0x120 ? BinaryPrimitives.ReadUInt64LittleEndian(header[0x118..]) : 0;
+        var entries = new List<GenericFileSystemEntry>();
+        var volume = new RawConsoleVolume(sourcePath, candidate, "Nintendo 3DS NCCH", "Raw NCCH/CXI/CFA container with section map");
+        entries.Add(CreateRawSectionEntry(volume, "/" + Path.GetFileName(sourcePath), Path.GetFileName(sourcePath), "NCCH Container", 0, length, "Whole NCCH raw export entry"));
+
+        if (header.Length >= 0x1B8)
+        {
+            AddNcchSection(entries, volume, header, length, "extended-header.bin", "NCCH Extended Header", 0x200, BinaryPrimitives.ReadUInt32LittleEndian(header[0x180..]));
+            AddNcchMediaUnitSection(entries, volume, header, length, "plain-region.bin", "NCCH Plain Region", 0x190);
+            AddNcchMediaUnitSection(entries, volume, header, length, "logo-region.bin", "NCCH Logo Region", 0x198);
+            AddNcchMediaUnitSection(entries, volume, header, length, "exefs.bin", "NCCH ExeFS", 0x1A0);
+            AddNcchMediaUnitSection(entries, volume, header, length, "romfs.bin", "NCCH RomFS", 0x1B0);
+        }
+
+        volume.AddRootEntries(entries);
+        var identity = string.IsNullOrWhiteSpace(productCode) ? string.Empty : $" product {productCode},";
+        var idText = programId == 0 ? string.Empty : $" program 0x{programId:X16},";
+        var status = $"Mounted Nintendo 3DS NCCH/CXI/CFA container;{identity}{idText} {entries.Count - 1:N0} section entries exposed for export. Encrypted sections still require external keys/tools.";
+        return new PartitionModel(volume, status);
+    }
+
     private static IEnumerable<GenericFileSystemEntry> CreateWholeImageRoot(string sourcePath, long length, string family)
     {
         var partition = new GenericPartitionCandidate(0, Guid.Empty, 0, length, family, SectorSize);
@@ -190,6 +219,47 @@ internal sealed class NintendoStorageImage : IDisposable
             Attributes = "raw",
             MetadataStatus = "Whole image raw export entry",
             Extents = [new FileExtent(0, length)]
+        };
+    }
+
+    private static void AddNcchMediaUnitSection(List<GenericFileSystemEntry> entries, RawConsoleVolume volume, ReadOnlySpan<byte> header, long imageLength, string name, string kind, int tableOffset)
+    {
+        if (tableOffset + 8 > header.Length)
+        {
+            return;
+        }
+
+        var offsetUnits = BinaryPrimitives.ReadUInt32LittleEndian(header[tableOffset..]);
+        var sizeUnits = BinaryPrimitives.ReadUInt32LittleEndian(header[(tableOffset + 4)..]);
+        AddNcchSection(entries, volume, header, imageLength, name, kind, offsetUnits * (long)NcsdMediaUnitSize, sizeUnits * (long)NcsdMediaUnitSize);
+    }
+
+    private static void AddNcchSection(List<GenericFileSystemEntry> entries, RawConsoleVolume volume, ReadOnlySpan<byte> header, long imageLength, string name, string kind, long offset, long length)
+    {
+        if (length <= 0 || offset < 0 || offset >= imageLength)
+        {
+            return;
+        }
+
+        var exportLength = Math.Min(length, imageLength - offset);
+        entries.Add(CreateRawSectionEntry(volume, "/" + name, name, kind, offset, exportLength, "NCCH header-declared section"));
+    }
+
+    private static GenericFileSystemEntry CreateRawSectionEntry(RawConsoleVolume volume, string path, string name, string kind, long offset, long length, string status)
+    {
+        return new GenericFileSystemEntry
+        {
+            Volume = volume,
+            Path = path,
+            Name = name,
+            Kind = kind,
+            IsDirectory = false,
+            Length = length,
+            Offset = offset,
+            Cluster = 0,
+            Attributes = "raw",
+            MetadataStatus = status,
+            Extents = length > 0 ? [new FileExtent(offset, length)] : []
         };
     }
 
@@ -400,6 +470,11 @@ internal sealed class NintendoStorageImage : IDisposable
         return value.Length >= prefix.Length && value[..prefix.Length].SequenceEqual(prefix);
     }
 
+    private static string ReadAscii(ReadOnlySpan<byte> data)
+    {
+        return Encoding.ASCII.GetString(data).TrimEnd('\0', ' ');
+    }
+
     private static bool TryExtractSingleImageEntry(string archivePath, out string extractedPath)
     {
         extractedPath = string.Empty;
@@ -555,6 +630,224 @@ internal sealed class NintendoStorageImage : IDisposable
         catch
         {
             // Best-effort cleanup only.
+        }
+    }
+}
+
+internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
+{
+    private const int SectorSize = 512;
+    private const uint GameCubeMagic = 0xC2339F3D;
+    private readonly List<GenericFileSystemEntry> _root = [];
+
+    private GameCubeDiscVolume(string sourcePath, GenericPartitionCandidate partition)
+        : base(sourcePath, partition, "Nintendo GameCube FST")
+    {
+    }
+
+    public override long ClusterSize => SectorSize;
+
+    public override long UsedSpace => Walk(_root).Where(entry => !entry.IsDirectory).Sum(entry => entry.Length);
+
+    public static bool TryOpen(string sourcePath, long length, out GameCubeDiscVolume volume, out string status)
+    {
+        volume = null!;
+        status = string.Empty;
+        if (length < 0x440)
+        {
+            return false;
+        }
+
+        Span<byte> header = stackalloc byte[0x440];
+        using var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.RandomAccess);
+        if (!GenericFileSystemImage.ReadExactly(stream, 0, header))
+        {
+            return false;
+        }
+
+        if (BinaryPrimitives.ReadUInt32BigEndian(header[0x18..]) != GameCubeMagic)
+        {
+            return false;
+        }
+
+        var fstOffset = BinaryPrimitives.ReadUInt32BigEndian(header[0x424..]);
+        var fstSize = BinaryPrimitives.ReadUInt32BigEndian(header[0x428..]);
+        if (fstOffset < 0x440 || fstSize < 12 || fstSize > 64 * 1024 * 1024 || fstOffset + (long)fstSize > length)
+        {
+            return false;
+        }
+
+        var fst = new byte[fstSize];
+        if (!GenericFileSystemImage.ReadExactly(stream, fstOffset, fst))
+        {
+            return false;
+        }
+
+        var entryCount = BinaryPrimitives.ReadUInt32BigEndian(fst.AsSpan(8, 4));
+        if (entryCount == 0 || entryCount > 100_000 || entryCount * 12L > fst.Length)
+        {
+            return false;
+        }
+
+        var nameTableOffset = checked((int)(entryCount * 12));
+        var candidateName = ReadGameCubeDiscName(header);
+        var candidate = new GenericPartitionCandidate(0, Guid.Empty, 0, length, candidateName, SectorSize);
+        volume = new GameCubeDiscVolume(sourcePath, candidate);
+        volume.LoadDirectory(fst, nameTableOffset, 1, checked((int)entryCount), "/", volume._root);
+        status = $"Mounted Nintendo GameCube FST, {volume._root.Count:N0} root entries. File export, carving, and raw inspection are available.";
+        return true;
+    }
+
+    public override IReadOnlyList<GenericFileSystemEntry> GetRoot() => _root;
+
+    public override IReadOnlyList<GenericFileSystemEntry> ScanDeleted(CancellationToken cancellationToken, IProgress<int>? progress)
+    {
+        progress?.Report(100);
+        return [];
+    }
+
+    protected override long ClusterToOffset(uint cluster)
+    {
+        return Offset + cluster * ClusterSize;
+    }
+
+    private int LoadDirectory(ReadOnlySpan<byte> fst, int nameTableOffset, int startIndex, int endIndex, string path, List<GenericFileSystemEntry> rows)
+    {
+        var index = startIndex;
+        while (index < endIndex)
+        {
+            var entryOffset = index * 12;
+            if (entryOffset + 12 > fst.Length)
+            {
+                return endIndex;
+            }
+
+            var firstWord = BinaryPrimitives.ReadUInt32BigEndian(fst[entryOffset..]);
+            var isDirectory = (firstWord & 0xFF000000) != 0;
+            var nameOffset = checked((int)(firstWord & 0x00FFFFFF));
+            var name = ReadNullTerminated(fst, nameTableOffset + nameOffset);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = isDirectory ? $"dir_{index:X4}" : $"file_{index:X4}.bin";
+            }
+
+            if (isDirectory)
+            {
+                var nextIndex = checked((int)BinaryPrimitives.ReadUInt32BigEndian(fst[(entryOffset + 8)..]));
+                if (nextIndex <= index || nextIndex > endIndex)
+                {
+                    nextIndex = index + 1;
+                }
+
+                var child = CreateDirectoryEntry(name, CombinePath(path, name));
+                rows.Add(child);
+                LoadDirectory(fst, nameTableOffset, index + 1, nextIndex, child.Path, child.Children);
+                index = nextIndex;
+                continue;
+            }
+
+            var fileOffset = BinaryPrimitives.ReadUInt32BigEndian(fst[(entryOffset + 4)..]);
+            var fileLength = BinaryPrimitives.ReadUInt32BigEndian(fst[(entryOffset + 8)..]);
+            if (fileLength > 0 && fileOffset + (long)fileLength <= Length)
+            {
+                rows.Add(CreateFileEntry(name, CombinePath(path, name), fileOffset, fileLength, index));
+            }
+
+            index++;
+        }
+
+        return index;
+    }
+
+    private GenericFileSystemEntry CreateDirectoryEntry(string name, string path)
+    {
+        return new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = path,
+            Name = name,
+            Kind = "Directory",
+            IsDirectory = true,
+            Length = 0,
+            Offset = 0,
+            Cluster = 0,
+            Attributes = "GameCube FST directory",
+            MetadataStatus = "Active GameCube file system table directory",
+            Extents = []
+        };
+    }
+
+    private GenericFileSystemEntry CreateFileEntry(string name, string path, uint offset, uint length, int index)
+    {
+        return new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = path,
+            Name = name,
+            Kind = "File",
+            IsDirectory = false,
+            Length = length,
+            Offset = offset,
+            Cluster = (uint)index,
+            Attributes = $"GameCube FST entry {index}",
+            MetadataStatus = "Active GameCube file system table file entry",
+            Extents = [new FileExtent(offset, length)]
+        };
+    }
+
+    private static string ReadGameCubeDiscName(ReadOnlySpan<byte> header)
+    {
+        var title = ReadAscii(header.Slice(0x20, Math.Min(0x3E0, header.Length - 0x20)));
+        var code = ReadAscii(header[..6]);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = "Nintendo GameCube disc";
+        }
+
+        return string.IsNullOrWhiteSpace(code) ? title : $"{title} [{code}]";
+    }
+
+    private static string ReadAscii(ReadOnlySpan<byte> data)
+    {
+        var end = 0;
+        while (end < data.Length && data[end] != 0)
+        {
+            end++;
+        }
+
+        return Encoding.ASCII.GetString(data[..end]).TrimEnd('\0', ' ');
+    }
+
+    private static string ReadNullTerminated(ReadOnlySpan<byte> data, int offset)
+    {
+        if (offset < 0 || offset >= data.Length)
+        {
+            return string.Empty;
+        }
+
+        var end = offset;
+        while (end < data.Length && data[end] != 0)
+        {
+            end++;
+        }
+
+        return Encoding.ASCII.GetString(data.Slice(offset, end - offset));
+    }
+
+    private static string CombinePath(string parent, string name)
+    {
+        return parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name;
+    }
+
+    private static IEnumerable<GenericFileSystemEntry> Walk(IEnumerable<GenericFileSystemEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            yield return entry;
+            foreach (var child in Walk(entry.Children))
+            {
+                yield return child;
+            }
         }
     }
 }

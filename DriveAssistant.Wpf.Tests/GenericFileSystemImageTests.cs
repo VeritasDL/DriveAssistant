@@ -696,6 +696,27 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoStorageImage_OpensGameCubeFstAndExportsFile()
+    {
+        using var temp = new TempFile(CreateGameCubeFstImage());
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<GameCubeDiscVolume>(partition.GenericVolume);
+        var root = volume.GetRoot();
+        var sys = Assert.Single(root, entry => entry.Name == "sys");
+        var file = Assert.Single(sys.Children);
+
+        Assert.Equal("Nintendo GameCube FST", volume.FamilyText);
+        Assert.Equal("readme.txt", file.Name);
+        Assert.Equal(5, file.Length);
+
+        using var output = TempFile.Empty();
+        volume.CopyFile(file, output.Path);
+        Assert.Equal(Encoding.ASCII.GetBytes("hello"), File.ReadAllBytes(output.Path));
+    }
+
+    [Fact]
     public void NintendoStorageImage_ExplicitWiiUAllowsEncryptedRawCandidate()
     {
         var image = new byte[0x8000];
@@ -837,6 +858,22 @@ bis_key_02_tweak = 88887777666655554444333322221111
         Assert.Equal("NCSD partition 0", partition.Name);
         Assert.Equal("Nintendo 3DS NCSD", volume.FamilyText);
         Assert.Contains("3DS NCSD partition detected", partition.Status);
+    }
+
+    [Fact]
+    public void NintendoStorageImage_Opens3dsNcchSections()
+    {
+        using var temp = new TempFile(Create3dsNcchImage());
+        using var storage = NintendoStorageImage.Open(temp.Path);
+
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
+        var entries = volume.GetRoot();
+
+        Assert.Equal("Nintendo 3DS NCCH", volume.FamilyText);
+        Assert.Contains("section entries", partition.Status);
+        Assert.Contains(entries, entry => entry.Name == "exefs.bin" && entry.Length == 0x400);
+        Assert.Contains(entries, entry => entry.Name == "romfs.bin" && entry.Length == 0x600);
     }
 
     [Fact]
@@ -1134,6 +1171,213 @@ bis_key_02_tweak = 88887777666655554444333322221111
         finally
         {
             File.Delete(memoryCardPath);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_ParsesPs1MemoryCardSaveBlocks()
+    {
+        var image = new byte[128 * 1024];
+        image[0] = (byte)'M';
+        image[1] = (byte)'C';
+        image[0x80] = 0x51;
+        image[0x84] = 1;
+        Encoding.ASCII.GetBytes("BASCUS-12345SAVE").CopyTo(image.AsSpan(0x8A));
+        Encoding.ASCII.GetBytes("save-data").CopyTo(image.AsSpan(0x2000));
+
+        using var temp = new TempFile(image);
+        var memoryCardPath = Path.ChangeExtension(temp.Path, ".mcr");
+        File.Copy(temp.Path, memoryCardPath, overwrite: true);
+        try
+        {
+            using var storage = LegacyConsoleStorageImage.Open(memoryCardPath);
+            var volume = Assert.IsType<RawConsoleVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var save = Assert.Single(volume.GetRoot(), entry => entry.Kind == "PS1 Save Block");
+
+            Assert.Equal("BASCUS-12345SAVE", save.Name);
+            Assert.Equal(8192, save.Length);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(save, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("save-data"), File.ReadAllBytes(output.Path).Take(9).ToArray());
+        }
+        finally
+        {
+            File.Delete(memoryCardPath);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_ParsesDreamcastGdiTracks()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var gdiPath = Path.Combine(directory.FullName, "disc.gdi");
+            var trackPath = Path.Combine(directory.FullName, "track03.bin");
+            File.WriteAllText(gdiPath, """
+3
+1 0 4 2352 track01.bin 0
+2 600 0 2352 track02.raw 0
+3 45000 4 2048 track03.bin 0
+""");
+            File.WriteAllBytes(trackPath, Encoding.ASCII.GetBytes("track-data"));
+
+            using var storage = LegacyConsoleStorageImage.Open(gdiPath);
+            var volume = Assert.IsType<RawConsoleVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var tracks = Assert.Single(volume.GetRoot(), entry => entry.Name == "tracks");
+            var track = Assert.Single(tracks.Children, entry => entry.Name == "track03_track03.bin");
+
+            Assert.Equal(10, track.Length);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(track, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("track-data"), File.ReadAllBytes(output.Path));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_OpensMode2CueBinIso9660DataTrack()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var cuePath = Path.Combine(directory.FullName, "game.cue");
+            var binPath = Path.Combine(directory.FullName, "gamedata.bin");
+            File.WriteAllText(cuePath, """
+FILE "gamedata.bin" BINARY
+  TRACK 01 MODE2/2352
+    INDEX 01 00:00:00
+""");
+            File.WriteAllBytes(binPath, CreateMode2RawImage(CreateIso9660Image("PSX_TEST", "SYSTEM.CNF", "BOOT=TEST")));
+
+            using var storage = LegacyConsoleStorageImage.Open(cuePath);
+            var partition = Assert.Single(storage.Partitions);
+            var volume = Assert.IsType<CdIso9660Volume>(partition.GenericVolume);
+            var file = Assert.Single(volume.GetRoot(), entry => entry.Name == "SYSTEM.CNF");
+
+            Assert.Contains("ISO9660", partition.Status);
+            Assert.Equal(9, file.Length);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(file, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("BOOT=TEST"), File.ReadAllBytes(output.Path));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_PublicDreamcastGdiFixtureSmoke_WhenConfigured()
+    {
+        var fixturePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DREAMCAST_GDI_FIXTURE");
+        if (string.IsNullOrWhiteSpace(fixturePath))
+        {
+            return;
+        }
+
+        using var storage = LegacyConsoleStorageImage.Open(fixturePath);
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume is RawConsoleVolume);
+        var cd = storage.Partitions.Select(partition => partition.GenericVolume).OfType<CdIso9660Volume>().FirstOrDefault();
+        Assert.NotNull(cd);
+        Assert.NotEmpty(cd!.GetRoot());
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_PublicBinCueFixtureSmoke_WhenConfigured()
+    {
+        var fixturePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_BINCUE_FIXTURE");
+        if (string.IsNullOrWhiteSpace(fixturePath))
+        {
+            return;
+        }
+
+        using var storage = LegacyConsoleStorageImage.Open(fixturePath);
+        var cd = storage.Partitions.Select(partition => partition.GenericVolume).OfType<CdIso9660Volume>().FirstOrDefault();
+        Assert.NotNull(cd);
+        Assert.NotEmpty(cd!.GetRoot());
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_PublicIsoFixtureSmoke_WhenConfigured()
+    {
+        var fixturePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_CD_ISO_FIXTURE");
+        if (string.IsNullOrWhiteSpace(fixturePath))
+        {
+            return;
+        }
+
+        using var storage = LegacyConsoleStorageImage.Open(fixturePath);
+        var cd = storage.Partitions.Select(partition => partition.GenericVolume).OfType<CdIso9660Volume>().FirstOrDefault();
+        Assert.NotNull(cd);
+        Assert.NotEmpty(cd!.GetRoot());
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_ReportsN64GameBoyGbaAndSaturnMetadata()
+    {
+        using var n64 = new TempFile(CreateN64RomImage());
+        using var gb = new TempFile(CreateGameBoyRomHeader());
+        using var gba = new TempFile(CreateGbaRomImage());
+        using var saturn = new TempFile(CreateSaturnImage());
+        var n64Path = Path.ChangeExtension(n64.Path, ".z64");
+        var gbPath = Path.ChangeExtension(gb.Path, ".gb");
+        var gbaPath = Path.ChangeExtension(gba.Path, ".gba");
+        var saturnPath = Path.ChangeExtension(saturn.Path, ".iso");
+        File.Copy(n64.Path, n64Path, overwrite: true);
+        File.Copy(gb.Path, gbPath, overwrite: true);
+        File.Copy(gba.Path, gbaPath, overwrite: true);
+        File.Copy(saturn.Path, saturnPath, overwrite: true);
+        try
+        {
+            using var n64Storage = LegacyConsoleStorageImage.Open(n64Path);
+            using var gbStorage = LegacyConsoleStorageImage.Open(gbPath);
+            using var gbaStorage = LegacyConsoleStorageImage.Open(gbaPath);
+            using var saturnStorage = LegacyConsoleStorageImage.Open(saturnPath);
+
+            Assert.Contains("TEST N64 GAME", Assert.Single(n64Storage.Partitions).Status);
+            Assert.Contains("MBC1+RAM+BATTERY", Assert.Single(gbStorage.Partitions).Status);
+            Assert.Contains("save marker SRAM", Assert.Single(gbaStorage.Partitions).Status);
+            Assert.Equal("Sega Saturn development disc image", Assert.IsType<RawConsoleVolume>(Assert.Single(saturnStorage.Partitions).GenericVolume).FamilyText);
+        }
+        finally
+        {
+            File.Delete(n64Path);
+            File.Delete(gbPath);
+            File.Delete(gbaPath);
+            File.Delete(saturnPath);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_RecognizesDreamcastCimAndFlashDumps()
+    {
+        using var cim = new TempFile(CreateDreamcastCimHeader());
+        using var flash = new TempFile(CreateDreamcastFlashDump());
+        var cimPath = Path.ChangeExtension(cim.Path, ".cim");
+        var flashPath = Path.ChangeExtension(flash.Path, ".hex");
+        File.Copy(cim.Path, cimPath, overwrite: true);
+        File.Copy(flash.Path, flashPath, overwrite: true);
+        try
+        {
+            using var cimStorage = LegacyConsoleStorageImage.Open(cimPath);
+            using var flashStorage = LegacyConsoleStorageImage.Open(flashPath);
+
+            Assert.Equal("Sega Dreamcast Katana CIM image", Assert.IsType<RawConsoleVolume>(Assert.Single(cimStorage.Partitions).GenericVolume).FamilyText);
+            var flashVolume = Assert.IsType<RawConsoleVolume>(Assert.Single(flashStorage.Partitions).GenericVolume);
+            Assert.Equal("Sega Dreamcast Katana flash dump", flashVolume.FamilyText);
+            Assert.Contains(flashVolume.GetRoot(), entry => entry.Name == "partition-p2.bin");
+        }
+        finally
+        {
+            File.Delete(cimPath);
+            File.Delete(flashPath);
         }
     }
 
@@ -1598,6 +1842,46 @@ bis_key_02_tweak = 88887777666655554444333322221111
         return image;
     }
 
+    private static byte[] CreateGameCubeFstImage()
+    {
+        var image = new byte[0x5000];
+        Encoding.ASCII.GetBytes("GAFE01").CopyTo(image.AsSpan(0));
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x18), 0xC2339F3D);
+        Encoding.ASCII.GetBytes("TEST GAMECUBE DISC").CopyTo(image.AsSpan(0x20));
+        const uint fstOffset = 0x1000;
+        const uint fstSize = 0x40;
+        const uint dataOffset = 0x3000;
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x424), fstOffset);
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x428), fstSize);
+
+        var fst = image.AsSpan((int)fstOffset, (int)fstSize);
+        fst[0] = 1;
+        BinaryPrimitives.WriteUInt32BigEndian(fst[8..], 3);
+        fst[12] = 1;
+        BinaryPrimitives.WriteUInt32BigEndian(fst[20..], 3);
+        BinaryPrimitives.WriteUInt32BigEndian(fst[24..], 4);
+        BinaryPrimitives.WriteUInt32BigEndian(fst[28..], dataOffset);
+        BinaryPrimitives.WriteUInt32BigEndian(fst[32..], 5);
+        Encoding.ASCII.GetBytes("sys\0readme.txt\0").CopyTo(fst[36..]);
+        Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan((int)dataOffset));
+        return image;
+    }
+
+    private static byte[] Create3dsNcchImage()
+    {
+        var image = new byte[0x5000];
+        Encoding.ASCII.GetBytes("NCCH").CopyTo(image.AsSpan(0x100));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x104), (uint)(image.Length / 0x200));
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x118), 0x000400000FF40A00);
+        Encoding.ASCII.GetBytes("CTR-P-TEST").CopyTo(image.AsSpan(0x150));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x180), 0x400);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x1A0), 0x08);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x1A4), 0x02);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x1B0), 0x0C);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x1B4), 0x03);
+        return image;
+    }
+
     private static void WritePs2ApaHeader(Span<byte> header, string id, uint startSector, uint lengthSectors, uint nextSector, ushort type)
     {
         BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 0x00415041);
@@ -1792,7 +2076,107 @@ bis_key_02_tweak = 88887777666655554444333322221111
         ];
         logo.CopyTo(header.AsSpan(0x104));
         Encoding.ASCII.GetBytes("DEVKIT").CopyTo(header.AsSpan(0x134));
+        header[0x147] = 0x03;
+        header[0x148] = 0x00;
+        header[0x149] = 0x02;
         return header;
+    }
+
+    private static byte[] CreateN64RomImage()
+    {
+        var image = new byte[0x2000];
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0), 0x80371240);
+        Encoding.ASCII.GetBytes("TEST N64 GAME").CopyTo(image.AsSpan(0x20));
+        Encoding.ASCII.GetBytes("NTEJ").CopyTo(image.AsSpan(0x3B));
+        return image;
+    }
+
+    private static byte[] CreateGbaRomImage()
+    {
+        var image = new byte[0x1000];
+        image[0] = 0xEA;
+        Encoding.ASCII.GetBytes("GBA TEST").CopyTo(image.AsSpan(0xA0));
+        Encoding.ASCII.GetBytes("AGTE").CopyTo(image.AsSpan(0xAC));
+        Encoding.ASCII.GetBytes("SRAM_V113").CopyTo(image.AsSpan(0x200));
+        return image;
+    }
+
+    private static byte[] CreateSaturnImage()
+    {
+        var image = new byte[0x12000];
+        Encoding.ASCII.GetBytes("SEGA SEGASATURN").CopyTo(image.AsSpan(0x10));
+        Encoding.ASCII.GetBytes("SATURN TEST DISC").CopyTo(image.AsSpan(0x30));
+        return image;
+    }
+
+    private static byte[] CreateDreamcastCimHeader()
+    {
+        var image = new byte[0x4000];
+        Encoding.ASCII.GetBytes("CIMF").CopyTo(image.AsSpan(0));
+        Encoding.ASCII.GetBytes("GDIM").CopyTo(image.AsSpan(8));
+        return image;
+    }
+
+    private static byte[] CreateDreamcastFlashDump()
+    {
+        var image = new byte[0x4000];
+        Encoding.ASCII.GetBytes("KATANA_FLASH____").CopyTo(image.AsSpan(0));
+        image[16] = 2;
+        return image;
+    }
+
+    private static byte[] CreateIso9660Image(string volumeId, string fileName, string fileText)
+    {
+        const int sectorSize = 2048;
+        const int pvdSector = 16;
+        const int rootSector = 20;
+        const int fileSector = 21;
+        var image = new byte[24 * sectorSize];
+        var pvd = image.AsSpan(pvdSector * sectorSize, sectorSize);
+        pvd[0] = 1;
+        Encoding.ASCII.GetBytes("CD001").CopyTo(pvd[1..]);
+        pvd[6] = 1;
+        Encoding.ASCII.GetBytes(volumeId.PadRight(32)).CopyTo(pvd[40..]);
+        WriteIsoDirectoryRecord(pvd[156..], rootSector, sectorSize, "\0", isDirectory: true);
+
+        var root = image.AsSpan(rootSector * sectorSize, sectorSize);
+        var offset = 0;
+        offset += WriteIsoDirectoryRecord(root[offset..], rootSector, sectorSize, "\0", isDirectory: true);
+        offset += WriteIsoDirectoryRecord(root[offset..], rootSector, sectorSize, "\u0001", isDirectory: true);
+        WriteIsoDirectoryRecord(root[offset..], fileSector, fileText.Length, fileName + ";1", isDirectory: false);
+        Encoding.ASCII.GetBytes(fileText).CopyTo(image.AsSpan(fileSector * sectorSize));
+        return image;
+    }
+
+    private static byte[] CreateMode2RawImage(byte[] iso)
+    {
+        const int logicalSectorSize = 2048;
+        const int rawSectorSize = 2352;
+        var sectorCount = iso.Length / logicalSectorSize;
+        var raw = new byte[sectorCount * rawSectorSize];
+        for (var sector = 0; sector < sectorCount; sector++)
+        {
+            iso.AsSpan(sector * logicalSectorSize, logicalSectorSize).CopyTo(raw.AsSpan(sector * rawSectorSize + 24));
+        }
+
+        return raw;
+    }
+
+    private static int WriteIsoDirectoryRecord(Span<byte> destination, int lba, int length, string name, bool isDirectory)
+    {
+        var nameBytes = Encoding.ASCII.GetBytes(name);
+        var recordLength = 33 + nameBytes.Length + (nameBytes.Length % 2 == 0 ? 1 : 0);
+        destination[0] = (byte)recordLength;
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[2..], (uint)lba);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[6..], (uint)lba);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[10..], (uint)length);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[14..], (uint)length);
+        destination[25] = isDirectory ? (byte)0x02 : (byte)0x00;
+        destination[28] = 1;
+        destination[31] = 1;
+        destination[32] = (byte)nameBytes.Length;
+        nameBytes.CopyTo(destination[33..]);
+        return recordLength;
     }
 
     private static T GetProperty<T>(object instance, string name)

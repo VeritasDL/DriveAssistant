@@ -6,7 +6,7 @@ This file maps publicly documented console devkit names to the storage/image for
 
 | Platform | Public devkit/test names | Storage impact in Drive Assistant |
 | --- | --- | --- |
-| PlayStation / PS1 | DTL-H development/debug units, Net Yaroze | PS1 memory-card images are recognized as legacy raw media (`.mcr`, `.mcd`, `.psx`) for export/carving. Track-aware PS1 CD browsing is still planned. |
+| PlayStation / PS1 | DTL-H development/debug units, Net Yaroze | PS1 memory-card images (`.mcr`, `.mcd`, `.psx`) expose active directory save-block rows for export plus whole-card raw export/carving. PS1-style ISO9660 data tracks mount from plain `.iso` and BIN/CUE MODE1/MODE2 images, including MODE2/2352 images similar to psximager's target format. XA Form 2 sector extraction is still limited. |
 | PlayStation 2 | DTL-T10000/DTL-T15000 TOOL, DTL-H TEST/debug stations, PS2 Linux kit media | PS2 APA/PFS HDDs are mounted and scanned. PS2 memory-card images are recognized as legacy raw media (`.ps2`) for export/carving. |
 | PlayStation 3 | DECHA/DECH debug stations, DECR reference tools | Managed PS3 HDD reader covers plaintext, ATA-CBC-swapped, ATA-XTS-swapped, UFS2 `dev_hdd0`, FAT `dev_hdd1`, and VFLASH FAT partitions when appropriate keys/images are available. |
 | PlayStation 4 | DUH-D development kits, DUH-T testing kits | Managed PS4/Orbis HDD support covers GPT, encrypted partition readers, UFS-oriented browsing/recovery, and PS4 package carving. |
@@ -24,11 +24,11 @@ This file maps publicly documented console devkit names to the storage/image for
 
 | Platform | Public devkit/test names | Storage impact in Drive Assistant |
 | --- | --- | --- |
-| Nintendo 64 | Partner-N64, IS-Viewer 64, SN64, Monegi Smart Pack | N64 ROM images (`.z64`, `.n64`, `.v64`) and common save-media extensions (`.sra`, `.eep`, `.fla`) are recognized as legacy raw media for export/carving. |
-| Game Boy / Game Boy Color / Game Boy Advance | IS-CGB, IS-AGB-EMU, PARTNER-AGB, ProDG/GBA workflows | GB/GBC/GBA ROMs and `.sav` files are recognized as legacy raw media for export/carving. |
+| Nintendo 64 | Partner-N64, IS-Viewer 64, SN64, Monegi Smart Pack | N64 ROM images (`.z64`, `.n64`, `.v64`, `.rom`) expose normalized header metadata and header/raw exports across the common byte orders handled by N64 dump converters. Common save-media extensions (`.sra`, `.eep`, `.fla`, `.mpk`) are classified for raw export/carving. |
+| Game Boy / Game Boy Color / Game Boy Advance | IS-CGB, IS-AGB-EMU, PARTNER-AGB, ProDG/GBA workflows | GB/GBC ROMs expose cartridge title, mapper, ROM size, and RAM size metadata. GBA ROMs expose header metadata and common save marker detection (`SRAM_V`, `FLASH_V`, `EEPROM_V`). `.sav` files remain raw export/carving. |
 | Nintendo DS / DSi | IS-NITRO-EMULATOR, IS-NITRO-DEBUGGER, IS-TWL/NTR family tools | NDS NitroFS ROM browsing/export is supported; DSi NAND layouts and plaintext/decrypted FAT16 images are supported according to available key/material state. |
-| Nintendo 3DS | PARTNER-CTR Debugger/Capture, Panda/test units | NCSD/NCCH detection, plaintext/decrypted CTR FAT16 browsing/export, and raw export/carving are supported. |
-| GameCube | Dolphin/NPDP-GDEV, NR Reader, DDH, SN-TDEV | GameCube/Dolphin disc images are detected from disc magic and carved as `.gcm`; raw export/carving is supported. Full GameCube filesystem browsing is planned. |
+| Nintendo 3DS | PARTNER-CTR Debugger/Capture, Panda/test units | NCSD partition mapping, NCCH section mapping, plaintext/decrypted CTR FAT16 browsing/export, keyed NAND FAT browsing when matching material is supplied, and raw export/carving are supported. |
+| GameCube | Dolphin/NPDP-GDEV, NR Reader, DDH, SN-TDEV | GameCube/Dolphin disc images mount the disc FST for file browsing/export when the FST is present; raw export/carving remains available. |
 | Wii | NDEV, RVT-R, RVT-H, Revolution SDK hardware | Wii NAND with BootMii keys, Wii optical images, WBFS containers, and RVT-H disc banks are supported. |
 | Wii U | CAT-DEV, CAT-R, Cafe SDK hardware | Wii U MLC WFS with matching `otp.bin`, WFS deleted metadata candidates, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, WUX/WFS/FST carving, and raw export are supported. |
 | Nintendo Switch | SDEV, EDEV, ADEV, NX-era hardware | Switch NAND/eMMC GPT discovery, BIS partition identification, AES-XTS FAT32 BIS mounting with keys, NSP/PFS0 entry expansion, CNMT summaries, NCA section spans, and Switch package/content carving are supported. |
@@ -37,8 +37,8 @@ This file maps publicly documented console devkit names to the storage/image for
 
 | Platform | Public devkit/test names | Storage impact in Drive Assistant |
 | --- | --- | --- |
-| Dreamcast | Katana / HKT-01 Dev.Box, GD-Writer HKT-0400, GD-R workflow | Dreamcast Katana `IP.BIN` boot sectors are carved, and `.gdi`, `.cdi`, `.vmu`, `.vms`, and `.dci` files are recognized as legacy raw media. Track-aware GDI/CDI and VMU filesystem browsing are planned. |
-| Saturn / earlier Sega | Sophia/CartDev-era Saturn tools and earlier cartridge/CD dev systems | Not yet implemented beyond generic raw export/carving if a readable filesystem or known signature is present. |
+| Dreamcast | Katana / HKT-01 Dev.Box, GD-Writer HKT-0400, GD-R workflow | Dreamcast Katana `IP.BIN` boot sectors are carved. `.gdi` descriptors expose track rows and export sidecar track files when present, and GDI/CUE/ISO data tracks mount as ISO9660 when the filesystem is present. `.cim`, `.hex` Katana flash partitions, `.cdi`, `.vmu`, `.vms`, and `.dci` are recognized for raw export/carving; DiscJuggler CDI and VMU filesystem parsing still need deeper work. |
+| Saturn / earlier Sega | Sophia/CartDev-era Saturn tools and earlier cartridge/CD dev systems | Sega Saturn system-area/IP.BIN headers are detected for raw export/carving. Full ISO9660/session browsing for Saturn cue/bin sets and earlier Sega cartridge/CD systems still needs dedicated parsers. |
 
 ## Practical Scope
 
