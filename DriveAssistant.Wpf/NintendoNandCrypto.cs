@@ -116,78 +116,96 @@ internal static class NintendoNandCrypto
                 return false;
             }
 
-            if (!Nintendo3dsKeyMaterial.TryLoad(keyPath, dev: false, out var material, out status)
-                && !Nintendo3dsKeyMaterial.TryLoad(keyPath, dev: true, out material, out status))
-            {
-                return false;
-            }
-
             var table = ReadNcsdPartitions(header);
             var mounted = 0;
-            foreach (var row in table)
+            var attempts = new List<string>();
+            foreach (var dev in new[] { false, true })
             {
-                if (row.Offset <= 0 || row.Length <= 0 || row.Offset + row.Length > stream.Length)
+                if (!Nintendo3dsKeyMaterial.TryLoad(keyPath, dev, out var material, out var loadStatus))
                 {
+                    attempts.Add(loadStatus);
                     continue;
                 }
 
-                if (row.FsType == 1 && row.CryptType is 2 or 3)
+                var before = mounted;
+                foreach (var row in table)
                 {
-                    var keyslot = row.CryptType == 2 ? KeyslotCtrNandOld : KeyslotCtrNandNew;
-                    if (!material.NormalKeys.TryGetValue(keyslot, out var key))
+                    if (row.Offset <= 0 || row.Length <= 0 || row.Offset + row.Length > stream.Length)
                     {
                         continue;
                     }
 
-                    var counter = ReadUInt128Big(SHA256.HashData(material.Cid).AsSpan(0, 0x10));
-                    var mbr = DecryptRange(stream, row.Offset, 0x200, key, counter, twlMode: false);
-                    var inner = ReadMbrPartitions(mbr.AsSpan(0x1BE, 0x42)).FirstOrDefault(part => part.Offset > 0 && part.Length > 0);
-                    if (inner.Length <= 0)
+                    if (row.FsType == 1 && row.CryptType is 2 or 3)
                     {
-                        continue;
-                    }
-
-                    var tempPath = CreateTemporaryPath("3ds-ctr", ".img");
-                    DecryptToFile(sourcePath, tempPath, row.Offset + inner.Offset, inner.Length, key, counter, twlMode: false);
-                    temporaryPaths.Add(tempPath);
-                    if (TryOpenFatPartition(tempPath, "3DS CTRNAND FAT", "Nintendo 3DS CTRNAND FAT", out var partition))
-                    {
-                        partitions.Add(partition);
-                        mounted++;
-                    }
-                }
-                else if (row.FsType == 1 && row.CryptType == 1 && material.NormalKeys.TryGetValue(KeyslotTwlNand, out var twlKey))
-                {
-                    var counter = ReadUInt128Little(SHA1.HashData(material.Cid).AsSpan(0, 0x10));
-                    var mbr = DecryptRange(stream, row.Offset, 0x200, twlKey, counter, twlMode: true);
-                    var innerRows = ReadMbrPartitions(mbr.AsSpan(0x1BE, 0x42));
-                    for (var innerIndex = 0; innerIndex < Math.Min(2, innerRows.Count); innerIndex++)
-                    {
-                        var inner = innerRows[innerIndex];
-                        if (inner.Offset <= 0 || inner.Length <= 0)
+                        var keyslot = row.CryptType == 2 ? KeyslotCtrNandOld : KeyslotCtrNandNew;
+                        if (!material.NormalKeys.TryGetValue(keyslot, out var key))
                         {
                             continue;
                         }
 
-                        var tempPath = CreateTemporaryPath("3ds-twl", ".img");
-                        DecryptToFile(sourcePath, tempPath, row.Offset + inner.Offset, inner.Length, twlKey, counter, twlMode: true);
+                        var counter = ReadUInt128Big(SHA256.HashData(material.Cid).AsSpan(0, 0x10));
+                        var mbr = DecryptRange(stream, row.Offset, 0x200, key, counter, twlMode: false);
+                        var inner = ReadMbrPartitions(mbr.AsSpan(0x1BE, 0x42)).FirstOrDefault(part => part.Offset > 0 && part.Length > 0);
+                        if (inner.Length <= 0)
+                        {
+                            continue;
+                        }
+
+                        var tempPath = CreateTemporaryPath(dev ? "3ds-dev-ctr" : "3ds-ctr", ".img");
+                        DecryptToFile(sourcePath, tempPath, row.Offset + inner.Offset, inner.Length, key, counter, twlMode: false);
                         temporaryPaths.Add(tempPath);
-                        if (TryOpenFatPartition(tempPath, innerIndex == 0 ? "3DS TWLNAND FAT" : "3DS TWLPHOTO FAT", "Nintendo 3DS TWL FAT", out var partition))
+                        if (TryOpenFatPartition(tempPath, dev ? "3DS Panda CTRNAND FAT" : "3DS CTRNAND FAT", dev ? "Nintendo 3DS Panda CTRNAND FAT" : "Nintendo 3DS CTRNAND FAT", out var partition))
                         {
                             partitions.Add(partition);
                             mounted++;
                         }
                     }
+                    else if (row.FsType == 1 && row.CryptType == 1 && material.NormalKeys.TryGetValue(KeyslotTwlNand, out var twlKey))
+                    {
+                        var counter = ReadUInt128Little(SHA1.HashData(material.Cid).AsSpan(0, 0x10));
+                        var mbr = DecryptRange(stream, row.Offset, 0x200, twlKey, counter, twlMode: true);
+                        var innerRows = ReadMbrPartitions(mbr.AsSpan(0x1BE, 0x42));
+                        for (var innerIndex = 0; innerIndex < Math.Min(2, innerRows.Count); innerIndex++)
+                        {
+                            var inner = innerRows[innerIndex];
+                            if (inner.Offset <= 0 || inner.Length <= 0)
+                            {
+                                continue;
+                            }
+
+                            var tempPath = CreateTemporaryPath(dev ? "3ds-dev-twl" : "3ds-twl", ".img");
+                            DecryptToFile(sourcePath, tempPath, row.Offset + inner.Offset, inner.Length, twlKey, counter, twlMode: true);
+                            temporaryPaths.Add(tempPath);
+                            if (TryOpenFatPartition(tempPath, innerIndex == 0 ? "3DS TWLNAND FAT" : "3DS TWLPHOTO FAT", "Nintendo 3DS TWL FAT", out var partition))
+                            {
+                                partitions.Add(partition);
+                                mounted++;
+                            }
+                        }
+                    }
                 }
+
+                attempts.Add($"{(dev ? "dev/Panda" : "retail")} key material mounted {mounted - before:N0} FAT partition(s).");
+                if (mounted > 0)
+                {
+                    break;
+                }
+            }
+
+            var sidecarMounted = TryOpen3dsFatSidecars(sourcePath, keyPath, partitions);
+            mounted += sidecarMounted;
+            if (sidecarMounted > 0)
+            {
+                attempts.Add($"mounted {sidecarMounted:N0} already-decrypted Panda/3DS FAT sidecar image(s) from the key folder.");
             }
 
             if (mounted == 0)
             {
-                status = "3DS key material loaded, but no decrypted FAT partition mounted.";
+                status = $"3DS key material loaded, but no decrypted FAT partition mounted. {string.Join(" ", attempts.Where(item => !string.IsNullOrWhiteSpace(item)))}";
                 return false;
             }
 
-            status = $"Mounted {mounted:N0} decrypted 3DS NAND FAT partition(s) with local boot9/OTP/CID key material.";
+            status = $"Mounted {mounted:N0} decrypted 3DS NAND FAT partition(s) with local boot9/OTP/CID key material. {string.Join(" ", attempts.Where(item => !string.IsNullOrWhiteSpace(item)))}";
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or CryptographicException or OverflowException or ArgumentException)
@@ -318,6 +336,56 @@ internal static class NintendoNandCrypto
                && fatCount is 1 or 2
                && rootEntryCount > 0
                && sectorsPerFat > 0;
+    }
+
+    private static int TryOpen3dsFatSidecars(string sourcePath, string keyPath, List<PartitionModel> partitions)
+    {
+        var mounted = 0;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in EnumerateExistingDirectories(Path.GetDirectoryName(sourcePath), File.Exists(keyPath) ? Path.GetDirectoryName(keyPath) : keyPath))
+        {
+            foreach (var candidate in Directory.EnumerateFiles(directory, "*fat*.bin", SearchOption.TopDirectoryOnly)
+                         .Concat(Directory.EnumerateFiles(directory, "*fat*.img", SearchOption.TopDirectoryOnly)))
+            {
+                if (!seen.Add(candidate) || string.Equals(Path.GetFullPath(candidate), Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (TryOpenFatPartition(candidate, "3DS Panda decrypted FAT sidecar", "Nintendo 3DS Panda FAT sidecar", out var partition))
+                    {
+                        partitions.Add(partition);
+                        mounted++;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or OverflowException)
+                {
+                    // Keep the keyed NAND path tolerant of unrelated files in fixture/key folders.
+                }
+            }
+        }
+
+        return mounted;
+    }
+
+    private static IEnumerable<string> EnumerateExistingDirectories(params string?[] directories)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in directories)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            var fullPath = Path.GetFullPath(directory);
+            if (seen.Add(fullPath))
+            {
+                yield return fullPath;
+            }
+        }
     }
 
     private static byte[] DecryptRange(FileStream stream, long offset, int length, byte[] key, UInt128 baseCounter, bool twlMode)

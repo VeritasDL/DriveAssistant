@@ -932,6 +932,31 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoStorageImage_3dsNandMountsDecryptedFatSidecar()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var ncsd = new byte[0x200];
+            Encoding.ASCII.GetBytes("NCSD").CopyTo(ncsd.AsSpan(0x100));
+            var nandPath = Path.Combine(directory.FullName, "panda-nand.bin");
+            var fatPath = Path.Combine(directory.FullName, "janpanda02518fat.bin");
+            File.WriteAllBytes(nandPath, ncsd);
+            File.WriteAllBytes(fatPath, CreateFat16Image());
+
+            using var storage = NintendoStorageImage.Open(nandPath, keyPath: directory.FullName);
+            var partition = Assert.Single(storage.Partitions);
+
+            Assert.IsType<Fat16Volume>(partition.GenericVolume);
+            Assert.Contains("Panda", partition.Status);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void NintendoStorageImage_DsiNandRealImageSmoke_WhenConfigured()
     {
         var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DSI_NAND_IMAGE");
@@ -1238,6 +1263,38 @@ bis_key_02_tweak = 88887777666655554444333322221111
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_BrowsesSgiIrixEfsDisklabel()
+    {
+        using var temp = new TempFile(CreateSgiEfsImage());
+        using var storage = LegacyConsoleStorageImage.Open(temp.Path);
+
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume?.FamilyText == "SGI/IRIX volume header");
+        var efs = Assert.IsType<SgiEfsVolume>(storage.Partitions.First(partition => partition.GenericVolume?.FamilyText == "SGI IRIX EFS").GenericVolume);
+        var directory = Assert.Single(efs.GetRoot(), entry => entry.Name == "n64" && entry.IsDirectory);
+        var file = Assert.Single(directory.Children, entry => entry.Name == "README.TXT");
+
+        Assert.Equal(5, file.Length);
+        using var output = TempFile.Empty();
+        efs.CopyFile(file, output.Path);
+        Assert.Equal("hello", Encoding.ASCII.GetString(File.ReadAllBytes(output.Path)));
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_SgiIrixRealImageSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_SGI_IRIX_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = LegacyConsoleStorageImage.Open(imagePath);
+        var efs = Assert.IsType<SgiEfsVolume>(storage.Partitions.First(partition => partition.GenericVolume?.FamilyText == "SGI IRIX EFS").GenericVolume);
+
+        Assert.Contains(Walk(efs.GetRoot()), entry => entry.Name.Equals("n64", StringComparison.OrdinalIgnoreCase) && entry.IsDirectory);
     }
 
     [Fact]
@@ -2160,6 +2217,96 @@ FILE "gamedata.bin" BINARY
         }
 
         return raw;
+    }
+
+    private static byte[] CreateSgiEfsImage()
+    {
+        const int blockSize = 512;
+        const int partitionStart = 100;
+        const int firstCg = 10;
+        const int rootDirBlock = 20;
+        const int childDirBlock = 22;
+        const int fileBlock = 23;
+        var image = new byte[256 * blockSize];
+
+        var volumeHeader = image.AsSpan(0, blockSize);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[0..], 0x0BE5A941);
+        Encoding.ASCII.GetBytes("/unix").CopyTo(volumeHeader[8..]);
+        Encoding.ASCII.GetBytes("sash").CopyTo(volumeHeader[72..]);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[80..], 2);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[84..], 512);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[312..], 120);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[316..], partitionStart);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[320..], 7);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[(312 + 10 * 12)..], 220);
+        BinaryPrimitives.WriteUInt32BigEndian(volumeHeader[(312 + 10 * 12 + 8)..], 6);
+
+        var super = image.AsSpan((partitionStart + 1) * blockSize, blockSize);
+        BinaryPrimitives.WriteUInt32BigEndian(super[0..], 120);
+        BinaryPrimitives.WriteUInt32BigEndian(super[4..], firstCg);
+        BinaryPrimitives.WriteUInt32BigEndian(super[8..], 80);
+        BinaryPrimitives.WriteUInt16BigEndian(super[12..], 2);
+        BinaryPrimitives.WriteUInt16BigEndian(super[14..], 32);
+        BinaryPrimitives.WriteUInt16BigEndian(super[16..], 8);
+        BinaryPrimitives.WriteUInt16BigEndian(super[18..], 1);
+        BinaryPrimitives.WriteUInt32BigEndian(super[28..], 0x072959);
+
+        var inodeBlock = image.AsSpan((partitionStart + firstCg) * blockSize, blockSize);
+        WriteSgiEfsInode(inodeBlock.Slice(2 * 128, 128), 0x41ED, 512, rootDirBlock, 1, 0);
+        WriteSgiEfsInode(inodeBlock.Slice(3 * 128, 128), 0x41ED, 512, childDirBlock, 1, 0);
+        var secondInodeBlock = image.AsSpan((partitionStart + firstCg + 1) * blockSize, blockSize);
+        WriteSgiEfsInode(secondInodeBlock.Slice(0, 128), 0x81A4, 5, fileBlock, 1, 0);
+
+        WriteSgiEfsDirectory(image.AsSpan((partitionStart + rootDirBlock) * blockSize, blockSize),
+        [
+            (2u, "."),
+            (2u, ".."),
+            (3u, "n64")
+        ]);
+        WriteSgiEfsDirectory(image.AsSpan((partitionStart + childDirBlock) * blockSize, blockSize),
+        [
+            (3u, "."),
+            (2u, ".."),
+            (4u, "README.TXT")
+        ]);
+        Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan((partitionStart + fileBlock) * blockSize));
+        return image;
+    }
+
+    private static void WriteSgiEfsInode(Span<byte> inode, ushort mode, uint size, int extentBlock, byte extentLength, int logicalOffset)
+    {
+        BinaryPrimitives.WriteUInt16BigEndian(inode[0..], mode);
+        BinaryPrimitives.WriteUInt16BigEndian(inode[2..], 1);
+        BinaryPrimitives.WriteUInt32BigEndian(inode[8..], size);
+        BinaryPrimitives.WriteUInt16BigEndian(inode[28..], 1);
+        inode[32] = 0;
+        inode[33] = (byte)((extentBlock >> 16) & 0xFF);
+        inode[34] = (byte)((extentBlock >> 8) & 0xFF);
+        inode[35] = (byte)(extentBlock & 0xFF);
+        inode[36] = extentLength;
+        inode[37] = (byte)((logicalOffset >> 16) & 0xFF);
+        inode[38] = (byte)((logicalOffset >> 8) & 0xFF);
+        inode[39] = (byte)(logicalOffset & 0xFF);
+    }
+
+    private static void WriteSgiEfsDirectory(Span<byte> block, IReadOnlyList<(uint Inode, string Name)> entries)
+    {
+        BinaryPrimitives.WriteUInt16BigEndian(block[0..], 0xBEEF);
+        block[3] = (byte)entries.Count;
+        var offset = 500;
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var (inode, name) = entries[index];
+            var nameBytes = Encoding.ASCII.GetBytes(name);
+            offset -= 5 + nameBytes.Length;
+            offset &= ~1;
+            block[4 + index] = (byte)(offset / 2);
+            BinaryPrimitives.WriteUInt32BigEndian(block[offset..], inode);
+            block[offset + 4] = (byte)nameBytes.Length;
+            nameBytes.CopyTo(block[(offset + 5)..]);
+        }
+
+        block[2] = (byte)(offset / 2);
     }
 
     private static int WriteIsoDirectoryRecord(Span<byte> destination, int lba, int length, string name, bool isDirectory)

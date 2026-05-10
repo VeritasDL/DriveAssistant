@@ -79,6 +79,11 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
             rows.Add(new PartitionModel(cdVolume, cdStatus));
         }
 
+        if (SgiIrixStorageImage.TryOpen(path, length, header, out var sgiPartitions))
+        {
+            rows.AddRange(sgiPartitions);
+        }
+
         if (TryCreatePartition(path, length, header, out var partition))
         {
             rows.Insert(0, partition);
