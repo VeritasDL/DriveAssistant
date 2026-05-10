@@ -25,12 +25,14 @@ internal sealed class NintendoStorageImage : IDisposable
     private const long GameCubeDiscSize = 1_459_978_240;
     private const int NcsdMediaUnitSize = 0x200;
     private readonly string? _temporarySourcePath;
+    private readonly IReadOnlyList<string> _temporaryPartitionPaths;
 
-    private NintendoStorageImage(string sourcePath, string activeSourcePath, string? temporarySourcePath, IReadOnlyList<PartitionModel> partitions)
+    private NintendoStorageImage(string sourcePath, string activeSourcePath, string? temporarySourcePath, IReadOnlyList<string> temporaryPartitionPaths, IReadOnlyList<PartitionModel> partitions)
     {
         SourcePath = sourcePath;
         ActiveSourcePath = activeSourcePath;
         _temporarySourcePath = temporarySourcePath;
+        _temporaryPartitionPaths = temporaryPartitionPaths;
         Partitions = partitions;
     }
 
@@ -53,6 +55,7 @@ internal sealed class NintendoStorageImage : IDisposable
 
         var length = new FileInfo(activePath).Length;
         var partitions = new List<PartitionModel>();
+        var temporaryPartitionPaths = new List<string>();
         using var stream = new FileStream(activePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
         var header = ReadHeader(stream, 0x8000);
         var keyStatus = WiiUKeyMaterial.TryLoad(keyPath, out var keys, out var loadStatus)
@@ -84,7 +87,8 @@ internal sealed class NintendoStorageImage : IDisposable
             var volume = Fat16Volume.Open(activePath, candidate);
             partitions.Add(new PartitionModel(volume, $"Mounted Nintendo FAT16 image, {volume.GetRoot().Count:N0} root entries. Metadata scan, deleted FAT entries, carving, and export are available."));
         }
-        else if (TryCreate3dsNcsdPartitions(activePath, length, header, partitions))
+        else if (NintendoNandCrypto.TryOpen3dsNand(activePath, keyPath, partitions, temporaryPartitionPaths, out _)
+                 || TryCreate3dsNcsdPartitions(activePath, length, header, partitions))
         {
             // NCSD/CCI/3DS NAND partition table was added.
         }
@@ -109,7 +113,10 @@ internal sealed class NintendoStorageImage : IDisposable
         }
         else if (LooksLikeDsiNand(length))
         {
-            AddDsiNandPartitions(activePath, length, partitions);
+            if (!NintendoNandCrypto.TryOpenDsiNand(activePath, partitions, temporaryPartitionPaths, out _))
+            {
+                AddDsiNandPartitions(activePath, length, partitions);
+            }
         }
         else if (wfsInfo.IsValid || LooksLikeWiiUStorage(header) || allowRawWiiUCandidate)
         {
@@ -135,10 +142,15 @@ internal sealed class NintendoStorageImage : IDisposable
                 TryDeleteTemporary(temporaryPath);
             }
 
+            foreach (var path in temporaryPartitionPaths)
+            {
+                TryDeleteTemporary(path);
+            }
+
             throw new InvalidDataException("No Nintendo Wii/Wii U/DS/3DS storage signatures were found.");
         }
 
-        return new NintendoStorageImage(sourcePath, activePath, temporaryPath, partitions);
+        return new NintendoStorageImage(sourcePath, activePath, temporaryPath, temporaryPartitionPaths, partitions);
     }
 
     public void Dispose()
@@ -146,6 +158,11 @@ internal sealed class NintendoStorageImage : IDisposable
         if (!string.IsNullOrWhiteSpace(_temporarySourcePath))
         {
             TryDeleteTemporary(_temporarySourcePath);
+        }
+
+        foreach (var path in _temporaryPartitionPaths)
+        {
+            TryDeleteTemporary(path);
         }
     }
 

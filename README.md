@@ -29,7 +29,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | PlayStation 2 | APA partition table detection for PS2 HDD images, managed PFS directory browsing/export, deleted/slack PFS metadata scanning, orphan PFS inode recovery candidates, HDLoader partition classification, raw partition export, and partition-scoped carving. |
 | Nintendo Wii / GameCube | Raw disc image detection, WBFS container detection, RVT-H devkit HDD bank detection, managed Wii NAND SFFS metadata browsing/export with BootMii keys, raw export, and Wii/GameCube/WBFS carving signatures. |
 | Nintendo Wii U | Managed Wii U WFS MLC browsing/export with matching `otp.bin`, WFS deleted metadata candidates, WFS/dev storage candidate detection, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, raw export, and WFS/FST/WUX carving signatures. |
-| Nintendo DS / DSi / 3DS | Nintendo DS NitroFS ROM browsing/export, plaintext/decrypted CTR/DSi FAT16 image browsing/export/deleted FAT scanning, DSi NAND layout candidates including 240 MiB trimmed dumps, 3DS NCSD/NCCH partition/container detection, raw export, and DS/3DS carving signatures. |
+| Nintendo DS / DSi / 3DS | Nintendo DS NitroFS ROM browsing/export, keyed DSi No$GBA-footer NAND FAT browsing/export, keyed 3DS NAND FAT browsing when matching boot9/OTP/CID material is supplied, plaintext/decrypted CTR/DSi FAT image browsing/export/deleted FAT scanning, NCSD/NCCH detection, raw export, and DS/3DS carving signatures. |
 | Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving. |
 
 ## Recovery Workflows
@@ -89,9 +89,9 @@ Some preserved Wii U devkit HDD dumps are ZIP64 local-header archives without a 
 
 ## DS, DSi, And 3DS Keys
 
-Plain Nintendo DS ROMs are NitroFS containers and do not need keys for browsing/export. Plaintext or already-decrypted 3DS/DSi FAT16 images mount directly and support active browsing, export, deleted FAT entry scanning, and file carving.
+Plain Nintendo DS ROMs are NitroFS containers and do not need keys for browsing/export. DSi NAND dumps with a No$GBA footer are decrypted locally into temporary FAT partitions for browsing/export. 3DS NAND browsing accepts a local folder containing matching `boot9.bin`, OTP (`otp.bin`, `otp.mem`, or `otp_dec.mem`), and NAND CID (`nand_cid.mem` or `nand_cid.bin`).
 
-Encrypted DSi and 3DS NAND dumps still need console-specific material before their FAT filesystems can be mounted. Example placeholder formats are in [`docs/example-key-files`](docs/example-key-files); keep real `boot9.bin`, OTP, CID, movable.sed, and NAND-derived keys local to the console that produced the dump.
+Plaintext or already-decrypted 3DS/DSi FAT images mount directly and support active browsing, export, deleted FAT entry scanning, and file carving. Example placeholder formats are in [`docs/example-key-files`](docs/example-key-files); keep real `boot9.bin`, OTP, CID, movable.sed, and NAND-derived keys local to the console that produced the dump.
 
 ## Wii Keys
 

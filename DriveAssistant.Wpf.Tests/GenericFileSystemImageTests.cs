@@ -828,16 +828,15 @@ bis_key_02_tweak = 88887777666655554444333322221111
             return;
         }
 
-        using var storage = NintendoStorageImage.Open(imagePath);
+        var keyDirectory = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_NAND_KEY_DIR");
+        using var storage = NintendoStorageImage.Open(imagePath, keyPath: keyDirectory);
 
         Assert.NotEmpty(storage.Partitions);
-        Assert.Contains(storage.Partitions, candidate => candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
-        var partition = storage.Partitions.First(candidate => candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
-        var volume = Assert.IsType<RawConsoleVolume>(partition.GenericVolume);
-        Assert.Contains("Contents may be encrypted", partition.Status);
+        Assert.Contains(storage.Partitions, candidate => candidate.GenericVolume is Fat16Volume or Fat32Volume || candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
+        var partition = storage.Partitions.First(candidate => candidate.GenericVolume is Fat16Volume or Fat32Volume || candidate.GenericVolume?.FamilyText == "Nintendo 3DS NCSD");
+        var volume = partition.GenericVolume!;
         Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
 
-        var keyDirectory = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_NAND_KEY_DIR");
         if (string.IsNullOrWhiteSpace(keyDirectory))
         {
             return;
@@ -846,6 +845,10 @@ bis_key_02_tweak = 88887777666655554444333322221111
         Assert.Equal(16, new FileInfo(Path.Combine(keyDirectory, "nand_cid.mem")).Length);
         Assert.Equal(256, new FileInfo(Path.Combine(keyDirectory, "otp.mem")).Length);
         Assert.Equal(256, new FileInfo(Path.Combine(keyDirectory, "otp_dec.mem")).Length);
+        if (string.Equals(Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_3DS_NAND_EXPECT_FAT"), "1", StringComparison.Ordinal))
+        {
+            Assert.Contains(storage.Partitions, candidate => candidate.GenericVolume is Fat16Volume or Fat32Volume);
+        }
     }
 
     [Fact]
@@ -860,12 +863,40 @@ bis_key_02_tweak = 88887777666655554444333322221111
         using var storage = NintendoStorageImage.Open(imagePath);
 
         Assert.NotEmpty(storage.Partitions);
-        Assert.Contains(storage.Partitions, partition => partition.GenericVolume?.FamilyText == "Nintendo DSi NAND");
-        var volume = storage.Partitions.First(partition => partition.GenericVolume?.FamilyText == "Nintendo DSi NAND").GenericVolume!;
+        Assert.Contains(storage.Partitions, partition => partition.GenericVolume is Fat16Volume or Fat32Volume || partition.GenericVolume?.FamilyText == "Nintendo DSi NAND");
+        var volume = storage.Partitions.First(partition => partition.GenericVolume is Fat16Volume or Fat32Volume || partition.GenericVolume?.FamilyText == "Nintendo DSi NAND").GenericVolume!;
         Assert.NotNull(volume.ScanDeleted(CancellationToken.None, null));
 
         var carver = new GenericFileCarver(imagePath, volume.Offset, Math.Min(volume.Length, 64L * 1024 * 1024), volume.Offset, 0x1000, volume.Name, ScanProfile.Fast);
         Assert.NotNull(carver.Analyze(CancellationToken.None, null));
+    }
+
+    [Fact]
+    public void NintendoStorageImage_DsiNandFooterMountsFat_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_DSI_NAND_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        var partitions = new List<PartitionModel>();
+        var temporaryPaths = new List<string>();
+        try
+        {
+            Assert.True(NintendoNandCrypto.TryOpenDsiNand(imagePath, partitions, temporaryPaths, out var status), status);
+            Assert.Contains(partitions, partition => partition.GenericVolume is Fat16Volume or Fat32Volume);
+        }
+        finally
+        {
+            foreach (var path in temporaryPaths)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
     }
 
     [Fact]
