@@ -168,12 +168,25 @@ public sealed class GenericFileCarver
             AddPs4PkgFragmentRows(rows, outerFile, cancellationToken);
         }
 
+        if (outerMatch.Extension.Equals(".nsp", StringComparison.OrdinalIgnoreCase))
+        {
+            AddPfs0PackageRows(rows, stream, outerFile, cancellationToken);
+            return;
+        }
+
+        if (outerMatch.Extension.Equals(".nca", StringComparison.OrdinalIgnoreCase))
+        {
+            AddNcaSectionRows(rows, stream, outerFile, cancellationToken);
+            return;
+        }
+
         if (!outerMatch.Extension.Equals(".xvd", StringComparison.OrdinalIgnoreCase)
             && !outerMatch.Extension.Equals(".xvc", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
+        AddXvdManifestRows(rows, stream, outerFile, cancellationToken);
         var scanLimit = _scanProfile == ScanProfile.Exhaustive
             ? outerFile.Size
             : Math.Min(outerFile.Size, 0x10000000L);
@@ -185,6 +198,84 @@ public sealed class GenericFileCarver
             $"{_sourceName} > {outerFile.Name}",
             cancellationToken);
         rows.AddRange(nestedRows);
+    }
+
+    private static void AddPfs0PackageRows(List<GenericCarvedFile> rows, FileStream stream, GenericCarvedFile packageFile, CancellationToken cancellationToken)
+    {
+        if (!TryReadPfs0Entries(stream, packageFile.SourceOffset, packageFile.Size, out var entries, out var headerSize))
+        {
+            return;
+        }
+
+        var packageBaseName = Path.GetFileNameWithoutExtension(packageFile.Name);
+        foreach (var entry in entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var entryOffset = packageFile.SourceOffset + headerSize + entry.Offset;
+            var extension = Path.GetExtension(entry.Name).TrimStart('.').ToUpperInvariant();
+            var kind = string.IsNullOrWhiteSpace(extension) ? "PFS0ENTRY" : extension;
+            var detail = $"Nintendo Switch PFS0 package entry: {entry.Name}";
+            if (extension.Equals("NCA", StringComparison.OrdinalIgnoreCase))
+            {
+                detail = TryReadNcaDetail(stream, entryOffset, entry.Size) ?? detail;
+            }
+            else if (extension.Equals("CNMT", StringComparison.OrdinalIgnoreCase))
+            {
+                detail = TryReadCnmtDetail(stream, entryOffset, entry.Size) ?? detail;
+            }
+
+            var child = new GenericCarvedFile(
+                $"{packageBaseName}_{SanitizeFileName(entry.Name)}",
+                kind,
+                packageFile.SourcePath,
+                entryOffset,
+                packageFile.DisplayOffset + headerSize + entry.Offset,
+                Math.Min(entry.Size, Math.Max(0, packageFile.Size - headerSize - entry.Offset)),
+                $"{packageFile.Source} > {packageFile.Name}",
+                $"{detail}; nested inside NSP/PFS0 package");
+            rows.Add(child);
+
+            if (extension.Equals("NCA", StringComparison.OrdinalIgnoreCase))
+            {
+                AddNcaSectionRows(rows, stream, child, cancellationToken);
+            }
+        }
+    }
+
+    private static void AddNcaSectionRows(List<GenericCarvedFile> rows, FileStream stream, GenericCarvedFile ncaFile, CancellationToken cancellationToken)
+    {
+        foreach (var section in TryReadNcaSections(stream, ncaFile.SourceOffset, ncaFile.Size))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rows.Add(new GenericCarvedFile(
+                $"{Path.GetFileNameWithoutExtension(ncaFile.Name)}_section_{section.Index}.bin",
+                "NCASECTION",
+                ncaFile.SourcePath,
+                ncaFile.SourceOffset + section.Offset,
+                ncaFile.DisplayOffset + section.Offset,
+                section.Size,
+                $"{ncaFile.Source} > {ncaFile.Name}",
+                $"Nintendo Switch NCA section {section.Index}; encrypted/raw section span from NCA section table"));
+        }
+    }
+
+    private static void AddXvdManifestRows(List<GenericCarvedFile> rows, FileStream stream, GenericCarvedFile xvdFile, CancellationToken cancellationToken)
+    {
+        foreach (var manifest in TryFindXvdXmlRuns(stream, xvdFile.SourceOffset, xvdFile.Size))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rows.Add(new GenericCarvedFile(
+                $"{Path.GetFileNameWithoutExtension(xvdFile.Name)}_manifest_{manifest.Offset:X}.xml",
+                "XVDXML",
+                xvdFile.SourcePath,
+                xvdFile.SourceOffset + manifest.Offset,
+                xvdFile.DisplayOffset + manifest.Offset,
+                manifest.Length,
+                $"{xvdFile.Source} > {xvdFile.Name}",
+                string.IsNullOrWhiteSpace(manifest.DisplayName)
+                    ? "Xbox XVD/XVC embedded XML manifest"
+                    : $"Xbox XVD/XVC embedded XML manifest; display name: {manifest.DisplayName}"));
+        }
     }
 
     private static void AddPs4PkgFragmentRows(List<GenericCarvedFile> rows, GenericCarvedFile packageFile, CancellationToken cancellationToken)
@@ -655,13 +746,17 @@ public sealed class GenericFileCarver
             && header[0x202] == (byte)'A'
             && header[0x203] is (byte)'2' or (byte)'3')
         {
-            return new GenericCarverMatch(string.Empty, ".nca", EstimateUnknownSize(remainingLength), "Nintendo Switch NCA content archive; plaintext/decrypted header detected");
+            var detail = TryReadNcaDetail(stream, absoluteOffset, remainingLength) ?? "Nintendo Switch NCA content archive; plaintext/decrypted header detected";
+            return new GenericCarverMatch(string.Empty, ".nca", EstimateUnknownSize(remainingLength), detail);
         }
 
         if (StartsWith(header, "PFS0"u8) && header.Length >= 0x10)
         {
             var size = TryGetPfs0Size(stream, absoluteOffset, remainingLength);
-            return new GenericCarverMatch(string.Empty, ".nsp", size > 0 ? size : EstimateUnknownSize(remainingLength), "Nintendo Switch NSP/PFS0 package");
+            var detail = TryReadPfs0Entries(stream, absoluteOffset, remainingLength, out var entries, out _)
+                ? $"Nintendo Switch NSP/PFS0 package; {entries.Count:N0} file entries"
+                : "Nintendo Switch NSP/PFS0 package";
+            return new GenericCarverMatch(string.Empty, ".nsp", size > 0 ? size : EstimateUnknownSize(remainingLength), detail);
         }
 
         if (header.Length >= 0x104 && StartsWith(header[0x100..], "HEAD"u8))
@@ -1040,16 +1135,26 @@ public sealed class GenericFileCarver
 
     private static string? TryFindXvdDisplayName(Stream stream, long absoluteOffset, long size)
     {
+        return TryFindXvdXmlRuns(stream, absoluteOffset, size)
+            .Select(row => row.DisplayName)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+
+    private static IReadOnlyList<XvdXmlRun> TryFindXvdXmlRuns(Stream stream, long absoluteOffset, long size)
+    {
         const int scanChunkSize = 0x400000;
         const int overlapSize = 0x4000;
         const long maxScanLength = 0x4000000;
+        const int maxRows = 16;
 
         var scanLength = Math.Min(size, maxScanLength);
         if (scanLength <= 0)
         {
-            return null;
+            return [];
         }
 
+        var rows = new List<XvdXmlRun>();
+        var seen = new HashSet<long>();
         var buffer = new byte[scanChunkSize + overlapSize];
         for (long relative = 0; relative < scanLength; relative += scanChunkSize)
         {
@@ -1068,14 +1173,23 @@ public sealed class GenericFileCarver
                 break;
             }
 
-            var value = TryFindDisplayNameInXmlAsciiRuns(buffer.AsSpan(0, read));
-            if (!string.IsNullOrWhiteSpace(value))
+            foreach (var run in TryFindXmlAsciiRuns(buffer.AsSpan(0, read)))
             {
-                return value;
+                var xmlOffset = windowStart - absoluteOffset + run.Offset;
+                if (xmlOffset < 0 || !seen.Add(xmlOffset))
+                {
+                    continue;
+                }
+
+                rows.Add(new XvdXmlRun(xmlOffset, run.Length, ExtractDisplayName(run.Xml)));
+                if (rows.Count >= maxRows)
+                {
+                    return rows;
+                }
             }
         }
 
-        return null;
+        return rows;
     }
 
     private static int ReadAt(Stream stream, long offset, Span<byte> buffer)
@@ -1089,7 +1203,15 @@ public sealed class GenericFileCarver
 
     private static string? TryFindDisplayNameInXmlAsciiRuns(ReadOnlySpan<byte> buffer)
     {
+        return TryFindXmlAsciiRuns(buffer)
+            .Select(row => ExtractDisplayName(row.Xml))
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+
+    private static IReadOnlyList<(int Offset, int Length, string Xml)> TryFindXmlAsciiRuns(ReadOnlySpan<byte> buffer)
+    {
         const int maxXmlLength = 0x100000;
+        var rows = new List<(int Offset, int Length, string Xml)>();
         for (var index = 0; index <= buffer.Length - 5; index++)
         {
             if (!LooksLikeXmlStart(buffer[index..]))
@@ -1106,19 +1228,16 @@ public sealed class GenericFileCarver
             var xml = Encoding.ASCII.GetString(buffer.Slice(index, length));
             if (xml.IndexOf("displayname", StringComparison.OrdinalIgnoreCase) < 0)
             {
+                rows.Add((index, length, xml));
+                index += Math.Max(0, length - 1);
                 continue;
             }
 
-            var value = ExtractDisplayName(xml);
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value;
-            }
-
+            rows.Add((index, length, xml));
             index += Math.Max(0, length - 1);
         }
 
-        return null;
+        return rows;
     }
 
     private static bool LooksLikeXmlStart(ReadOnlySpan<byte> buffer)
@@ -1303,6 +1422,162 @@ public sealed class GenericFileCarver
         return maxEnd;
     }
 
+    private static bool TryReadPfs0Entries(Stream stream, long absoluteOffset, long remainingLength, out IReadOnlyList<Pfs0EntryInfo> entries, out long headerSize)
+    {
+        entries = [];
+        headerSize = 0;
+        Span<byte> header = stackalloc byte[0x10];
+        if (ReadAt(stream, absoluteOffset, header) != header.Length || !StartsWith(header, "PFS0"u8))
+        {
+            return false;
+        }
+
+        var fileCount = ReadUInt32LittleEndian(header[4..]);
+        var stringTableSize = ReadUInt32LittleEndian(header[8..]);
+        if (fileCount == 0 || fileCount > 4096 || stringTableSize > 0x100000)
+        {
+            return false;
+        }
+
+        var entriesSize = checked((long)fileCount * 0x18);
+        headerSize = 0x10 + entriesSize + stringTableSize;
+        if (headerSize <= 0 || headerSize > remainingLength)
+        {
+            return false;
+        }
+
+        var raw = new byte[entriesSize + stringTableSize];
+        if (ReadAt(stream, absoluteOffset + 0x10, raw) != raw.Length)
+        {
+            return false;
+        }
+
+        var stringTable = raw.AsSpan((int)entriesSize, (int)stringTableSize);
+        var rows = new List<Pfs0EntryInfo>();
+        for (var index = 0; index < fileCount; index++)
+        {
+            var entry = raw.AsSpan(index * 0x18, 0x18);
+            var fileOffset = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64LittleEndian(entry)));
+            var fileSize = checked((long)Math.Min((ulong)long.MaxValue, ReadUInt64LittleEndian(entry[8..])));
+            var nameOffset = ReadUInt32LittleEndian(entry[0x10..]);
+            if (nameOffset >= stringTable.Length || headerSize + fileOffset + fileSize > remainingLength)
+            {
+                return false;
+            }
+
+            var name = ReadNullTerminatedUtf8(stringTable[(int)nameOffset..]);
+            rows.Add(new Pfs0EntryInfo(string.IsNullOrWhiteSpace(name) ? $"entry_{index:D4}.bin" : name, fileOffset, fileSize));
+        }
+
+        entries = rows;
+        return true;
+    }
+
+    private static string? TryReadNcaDetail(Stream stream, long absoluteOffset, long remainingLength)
+    {
+        if (remainingLength < 0x400)
+        {
+            return null;
+        }
+
+        Span<byte> header = stackalloc byte[0x400];
+        if (ReadAt(stream, absoluteOffset, header) < header.Length || !StartsWith(header[0x200..], "NCA"u8))
+        {
+            return null;
+        }
+
+        var distribution = header[0x204] switch
+        {
+            0 => "download",
+            1 => "gamecard",
+            _ => $"0x{header[0x204]:X2}"
+        };
+        var contentType = header[0x205] switch
+        {
+            0 => "program",
+            1 => "meta",
+            2 => "control",
+            3 => "manual",
+            4 => "data",
+            5 => "public data",
+            _ => $"0x{header[0x205]:X2}"
+        };
+        var cryptoType = header[0x206];
+        var keyIndex = header[0x207];
+        var programId = ReadUInt64LittleEndian(header[0x210..]);
+        return $"Nintendo Switch NCA content archive; {distribution}, {contentType}, crypto type 0x{cryptoType:X2}, key index 0x{keyIndex:X2}, program/content id 0x{programId:X16}";
+    }
+
+    private static IReadOnlyList<NcaSectionInfo> TryReadNcaSections(Stream stream, long absoluteOffset, long remainingLength)
+    {
+        if (remainingLength < 0x400)
+        {
+            return [];
+        }
+
+        Span<byte> header = stackalloc byte[0x400];
+        if (ReadAt(stream, absoluteOffset, header) < header.Length || !StartsWith(header[0x200..], "NCA"u8))
+        {
+            return [];
+        }
+
+        var rows = new List<NcaSectionInfo>();
+        for (var index = 0; index < 4; index++)
+        {
+            var entry = header.Slice(0x240 + index * 0x10, 0x10);
+            var startMedia = ReadUInt32LittleEndian(entry);
+            var endMedia = ReadUInt32LittleEndian(entry[4..]);
+            if (startMedia == 0 || endMedia <= startMedia)
+            {
+                continue;
+            }
+
+            var offset = startMedia * 0x200L;
+            var size = (endMedia - startMedia) * 0x200L;
+            if (offset < 0 || size <= 0 || offset >= remainingLength)
+            {
+                continue;
+            }
+
+            rows.Add(new NcaSectionInfo(index, offset, Math.Min(size, remainingLength - offset)));
+        }
+
+        return rows;
+    }
+
+    private static string? TryReadCnmtDetail(Stream stream, long absoluteOffset, long remainingLength)
+    {
+        if (remainingLength < 0x20)
+        {
+            return null;
+        }
+
+        Span<byte> header = stackalloc byte[0x20];
+        if (ReadAt(stream, absoluteOffset, header) < header.Length)
+        {
+            return null;
+        }
+
+        var titleId = ReadUInt64LittleEndian(header);
+        var version = ReadUInt32LittleEndian(header[8..]);
+        var type = header[0x0C] switch
+        {
+            0x01 => "system program",
+            0x02 => "system data",
+            0x03 => "system update",
+            0x04 => "boot image package",
+            0x05 => "boot image package safe",
+            0x80 => "application",
+            0x81 => "patch",
+            0x82 => "add-on content",
+            0x83 => "delta",
+            _ => $"0x{header[0x0C]:X2}"
+        };
+        var contentCount = ReadUInt16LittleEndian(header[0x0E..]);
+        var metaCount = ReadUInt16LittleEndian(header[0x10..]);
+        return $"Nintendo Switch CNMT content metadata; title id 0x{titleId:X16}, version {version}, type {type}, content entries {contentCount:N0}, meta entries {metaCount:N0}";
+    }
+
     private static long EstimateUnknownSize(long remainingLength)
     {
         return Math.Min(remainingLength, 0x100000);
@@ -1325,6 +1600,29 @@ public sealed class GenericFileCarver
         }
 
         return length == 0 ? string.Empty : Encoding.ASCII.GetString(buffer, 0, length);
+    }
+
+    private static string ReadNullTerminatedUtf8(ReadOnlySpan<byte> value)
+    {
+        var length = value.IndexOf((byte)0);
+        if (length < 0)
+        {
+            length = value.Length;
+        }
+
+        return Encoding.UTF8.GetString(value[..length]);
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            builder.Append(invalid.Contains(ch) ? '_' : ch);
+        }
+
+        return builder.Length == 0 ? "entry.bin" : builder.ToString();
     }
 
     private static bool StartsWith(ReadOnlySpan<byte> value, ReadOnlySpan<byte> prefix)
@@ -1356,6 +1654,12 @@ public sealed class GenericFileCarver
     {
         return ReadUInt32LittleEndian(value) | ((ulong)ReadUInt32LittleEndian(value[4..]) << 32);
     }
+
+    private sealed record Pfs0EntryInfo(string Name, long Offset, long Size);
+
+    private sealed record NcaSectionInfo(int Index, long Offset, long Size);
+
+    private sealed record XvdXmlRun(long Offset, long Length, string? DisplayName);
 }
 
 public sealed record Ps3DirectoryEntry(

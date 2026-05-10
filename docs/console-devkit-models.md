@@ -18,7 +18,7 @@ This file maps publicly documented console devkit names to the storage/image for
 | --- | --- | --- |
 | Original Xbox | XDK development/debug kits, DVT/DVT4-era hardware | FATX partitions, boot filesystem entries, XBE carving, and devkit boot files such as `devkit.ini` are already handled. |
 | Xbox 360 | XDK/debug kits, sidecar-era dev units, stress kits | FATX partitions, XEX carving variants, STFS packages, and recovery scans are supported. |
-| Xbox One / Xbox Series | Durango/Scarlett XDK hardware, current Xbox Development Kit hardware | GPT/NTFS browsing plus XVD/XVC detection and bounded nested filesystem probing are supported where images are readable. |
+| Xbox One / Xbox Series | Durango/Scarlett XDK hardware, current Xbox Development Kit hardware | GPT/NTFS browsing plus XVD/XVC detection, manifest extraction, package classification, and bounded nested filesystem probing are supported where images are readable. |
 
 ## Nintendo
 
@@ -31,7 +31,7 @@ This file maps publicly documented console devkit names to the storage/image for
 | GameCube | Dolphin/NPDP-GDEV, NR Reader, DDH, SN-TDEV | GameCube/Dolphin disc images are detected from disc magic and carved as `.gcm`; raw export/carving is supported. Full GameCube filesystem browsing is planned. |
 | Wii | NDEV, RVT-R, RVT-H, Revolution SDK hardware | Wii NAND with BootMii keys, Wii optical images, WBFS containers, and RVT-H disc banks are supported. |
 | Wii U | CAT-DEV, CAT-R, Cafe SDK hardware | Wii U MLC WFS with matching `otp.bin`, WFS deleted metadata candidates, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, WUX/WFS/FST carving, and raw export are supported. |
-| Nintendo Switch | SDEV, EDEV, ADEV, NX-era hardware | Switch NAND/eMMC GPT discovery, BIS partition identification, AES-XTS FAT32 BIS mounting with keys, and Switch package/content carving are supported. |
+| Nintendo Switch | SDEV, EDEV, ADEV, NX-era hardware | Switch NAND/eMMC GPT discovery, BIS partition identification, AES-XTS FAT32 BIS mounting with keys, NSP/PFS0 entry expansion, CNMT summaries, NCA section spans, and Switch package/content carving are supported. |
 
 ## Sega
 

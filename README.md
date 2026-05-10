@@ -22,7 +22,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | General HDD/SSD images | Raw image loading, partition discovery, FAT16, FAT32, exFAT, NTFS, export, metadata scanning, file carving. |
 | Original Xbox | FATX partition browsing, metadata recovery, export, file carving. |
 | Xbox 360 | FATX partition browsing, metadata recovery, export, XEX carving, file carving. |
-| Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, nested readable filesystem probing where possible. |
+| Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, embedded XVD/XVC manifest extraction, and nested readable filesystem probing where possible. |
 | Legacy devkit / ROM / save media | PS1/PS2 memory-card raw media, Dreamcast Katana GD-ROM/VMU extensions, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and whole-image raw export/carving. |
 | PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
 | PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
@@ -30,7 +30,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | Nintendo Wii / GameCube | Raw disc image detection, WBFS container detection, RVT-H devkit HDD bank detection, managed Wii NAND SFFS metadata browsing/export with BootMii keys, raw export, and Wii/GameCube/WBFS carving signatures. |
 | Nintendo Wii U | Managed Wii U WFS MLC browsing/export with matching `otp.bin`, WFS deleted metadata candidates, WFS/dev storage candidate detection, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, raw export, and WFS/FST/WUX carving signatures. |
 | Nintendo DS / DSi / 3DS | Nintendo DS NitroFS ROM browsing/export, keyed DSi No$GBA-footer NAND FAT browsing/export, keyed 3DS NAND FAT browsing when matching boot9/OTP/CID material is supplied, plaintext/decrypted CTR/DSi FAT image browsing/export/deleted FAT scanning, NCSD/NCCH detection, raw export, and DS/3DS carving signatures. |
-| Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving. |
+| Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving, NSP/PFS0 entry expansion, CNMT metadata summaries, and NCA section spans. |
 
 ## Recovery Workflows
 
@@ -69,7 +69,7 @@ Format-specific carving includes:
 - Legacy/devkit media: PS1 memory cards, PS2 memory cards, Dreamcast Katana `IP.BIN`, Nintendo 64 ROM images, and Game Boy-family ROM headers.
 - Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, RVT-H disc banks, Wii U WFS markers, Wii U FST markers, and WUX compressed disc images.
 - Nintendo DS / DSi / 3DS: Nintendo DS NitroFS ROMs, 3DS NCSD/CCI/NAND images, and 3DS NCCH/CXI/CFA containers.
-- Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
+- Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0` with nested entry expansion, `CNMT`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
 - Custom signatures from `custom_carvers.json`.
 
 Raw encrypted content is not magically decrypted by carving. For encrypted console storage, mount or decrypt the relevant partition first when keys are available.

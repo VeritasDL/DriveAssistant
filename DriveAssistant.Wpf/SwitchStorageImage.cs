@@ -477,12 +477,24 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
                     ? BuildContiguousClusterList(firstDataCluster, isDirectory ? ClusterSize : size)
                     : GetClusterChain(firstDataCluster);
                 var extents = isDirectory ? new List<FileExtent>() : BuildExtents(clusters, size);
+                var children = new List<GenericFileSystemEntry>();
+                var kind = isDirectory ? "Folder" : "File";
+                var metadataStatus = deleted ? "Deleted Switch FAT32 directory entry" : "Active Switch FAT32 directory entry";
+                if (!deleted && !isDirectory && TryCreateSwitchContainerChildren(childPath, name, size, extents, out var containerKind, out var containerStatus, out var containerChildren))
+                {
+                    isDirectory = true;
+                    kind = containerKind;
+                    metadataStatus = containerStatus;
+                    children.AddRange(containerChildren);
+                    extents = [];
+                }
+
                 var item = new GenericFileSystemEntry
                 {
                     Volume = this,
                     Path = childPath,
                     Name = deleted ? $"_{name.TrimStart('_')}" : name,
-                    Kind = isDirectory ? "Folder" : "File",
+                    Kind = kind,
                     IsDirectory = isDirectory,
                     Length = isDirectory ? 0 : size,
                     Modified = DecodeFatDateTime(entry),
@@ -492,11 +504,12 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
                     Cluster = firstDataCluster,
                     IsDeleted = deleted,
                     Attributes = $"0x{attr:X2}",
-                    MetadataStatus = deleted ? "Deleted Switch FAT32 directory entry" : "Active Switch FAT32 directory entry",
+                    MetadataStatus = metadataStatus,
                     Extents = extents
                 };
+                item.Children.AddRange(children);
 
-                if (!deleted && isDirectory && firstDataCluster >= 2)
+                if (!deleted && children.Count == 0 && isDirectory && firstDataCluster >= 2)
                 {
                     item.Children.AddRange(ReadDirectory(firstDataCluster, childPath, includeDeleted: false, cancellationToken));
                 }
@@ -506,6 +519,345 @@ internal sealed class SwitchFat32Volume : GenericFileSystemVolume
         }
 
         return entries;
+    }
+
+    private bool TryCreateSwitchContainerChildren(
+        string parentPath,
+        string name,
+        long size,
+        IReadOnlyList<FileExtent> extents,
+        out string kind,
+        out string metadataStatus,
+        out IReadOnlyList<GenericFileSystemEntry> children)
+    {
+        kind = "File";
+        metadataStatus = "Active Switch FAT32 directory entry";
+        children = [];
+        if (size <= 0 || extents.Count == 0)
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(name);
+        if (extension.Equals(".nsp", StringComparison.OrdinalIgnoreCase) && TryReadPfs0Package(parentPath, name, size, extents, out var pfsChildren))
+        {
+            kind = "NSP/PFS0 Package";
+            metadataStatus = $"Browseable Nintendo Switch PFS0 package; {pfsChildren.Count - 1:N0} nested file entries. The raw package is exposed as __container.";
+            children = pfsChildren;
+            return true;
+        }
+
+        if (extension.Equals(".nca", StringComparison.OrdinalIgnoreCase) && TryReadNcaArchive(parentPath, name, size, extents, out var ncaStatus, out var ncaChildren))
+        {
+            kind = "NCA Content Archive";
+            metadataStatus = ncaStatus;
+            children = ncaChildren;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryReadPfs0Package(string parentPath, string name, long size, IReadOnlyList<FileExtent> extents, out IReadOnlyList<GenericFileSystemEntry> children)
+    {
+        children = [];
+        var header = ReadFileSpan(extents, 0, 0x10);
+        if (header.Length != 0x10 || !header.AsSpan(0, 4).SequenceEqual("PFS0"u8))
+        {
+            return false;
+        }
+
+        var fileCount = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4));
+        var stringTableSize = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8));
+        if (fileCount == 0 || fileCount > 4096 || stringTableSize > 0x100000)
+        {
+            return false;
+        }
+
+        var entriesSize = checked((long)fileCount * 0x18);
+        var headerSize = 0x10 + entriesSize + stringTableSize;
+        if (headerSize <= 0 || headerSize > size)
+        {
+            return false;
+        }
+
+        var raw = ReadFileSpan(extents, 0x10, (int)(entriesSize + stringTableSize));
+        if (raw.Length != entriesSize + stringTableSize)
+        {
+            return false;
+        }
+
+        var rows = new List<GenericFileSystemEntry>
+        {
+            CreateVirtualFile(parentPath, "__container" + Path.GetExtension(name), "Raw Package", 0, size, extents, "Whole NSP/PFS0 package raw export")
+        };
+        var stringTable = raw.AsSpan((int)entriesSize, (int)stringTableSize);
+        for (var index = 0; index < fileCount; index++)
+        {
+            var entry = raw.AsSpan(index * 0x18, 0x18);
+            var fileOffset = checked((long)Math.Min((ulong)long.MaxValue, BinaryPrimitives.ReadUInt64LittleEndian(entry)));
+            var fileSize = checked((long)Math.Min((ulong)long.MaxValue, BinaryPrimitives.ReadUInt64LittleEndian(entry[8..])));
+            var nameOffset = BinaryPrimitives.ReadUInt32LittleEndian(entry[0x10..]);
+            if (nameOffset >= stringTable.Length || headerSize + fileOffset + fileSize > size)
+            {
+                return false;
+            }
+
+            var childName = ReadNullTerminatedUtf8(stringTable[(int)nameOffset..]);
+            if (string.IsNullOrWhiteSpace(childName))
+            {
+                childName = $"entry_{index:D4}.bin";
+            }
+
+            var childExtents = BuildVirtualExtents(extents, headerSize + fileOffset, fileSize);
+            var childKind = GetSwitchContentKind(childName);
+            var childStatus = $"PFS0 package entry {index}: {childName}";
+            var childHeader = ReadFileSpan(extents, headerSize + fileOffset, (int)Math.Min(0x400, fileSize));
+            if (Path.GetExtension(childName).Equals(".cnmt", StringComparison.OrdinalIgnoreCase))
+            {
+                childStatus = TryDescribeCnmt(childHeader) ?? childStatus;
+            }
+            else if (Path.GetExtension(childName).Equals(".nca", StringComparison.OrdinalIgnoreCase))
+            {
+                childStatus = TryDescribeNca(childHeader) ?? childStatus;
+            }
+
+            rows.Add(CreateVirtualFile(parentPath, childName, childKind, headerSize + fileOffset, fileSize, childExtents, childStatus));
+        }
+
+        children = rows;
+        return true;
+    }
+
+    private bool TryReadNcaArchive(string parentPath, string name, long size, IReadOnlyList<FileExtent> extents, out string metadataStatus, out IReadOnlyList<GenericFileSystemEntry> children)
+    {
+        metadataStatus = "Active Switch NCA content archive";
+        children = [];
+        var header = ReadFileSpan(extents, 0, (int)Math.Min(0x400, size));
+        if (header.Length < 0x400 || !header.AsSpan(0x200, 3).SequenceEqual("NCA"u8))
+        {
+            return false;
+        }
+
+        metadataStatus = TryDescribeNca(header) ?? metadataStatus;
+        var rows = new List<GenericFileSystemEntry>
+        {
+            CreateVirtualFile(parentPath, "__container" + Path.GetExtension(name), "Raw NCA", 0, size, extents, "Whole NCA raw export")
+        };
+
+        for (var index = 0; index < 4; index++)
+        {
+            var section = header.AsSpan(0x240 + index * 0x10, 0x10);
+            var startMedia = BinaryPrimitives.ReadUInt32LittleEndian(section);
+            var endMedia = BinaryPrimitives.ReadUInt32LittleEndian(section[4..]);
+            if (startMedia == 0 || endMedia <= startMedia)
+            {
+                continue;
+            }
+
+            var sectionOffset = startMedia * 0x200L;
+            var sectionSize = Math.Min((endMedia - startMedia) * 0x200L, size - sectionOffset);
+            if (sectionOffset < 0 || sectionSize <= 0 || sectionOffset >= size)
+            {
+                continue;
+            }
+
+            rows.Add(CreateVirtualFile(
+                parentPath,
+                $"section_{index}.bin",
+                "NCA Section",
+                sectionOffset,
+                sectionSize,
+                BuildVirtualExtents(extents, sectionOffset, sectionSize),
+                $"NCA section {index}; encrypted/raw section span from NCA section table"));
+        }
+
+        children = rows;
+        return rows.Count > 1;
+    }
+
+    private GenericFileSystemEntry CreateVirtualFile(string parentPath, string name, string kind, long relativeOffset, long length, IReadOnlyList<FileExtent> extents, string metadataStatus)
+    {
+        return new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = CombinePath(parentPath, name),
+            Name = name,
+            Kind = kind,
+            IsDirectory = false,
+            Length = length,
+            Offset = extents.Count > 0 ? extents[0].Offset : Offset + relativeOffset,
+            Cluster = ClusterSize > 0 ? (extents.Count > 0 ? (extents[0].Offset - Offset) / ClusterSize : 0) : 0,
+            Attributes = "virtual",
+            MetadataStatus = metadataStatus,
+            Extents = extents
+        };
+    }
+
+    private byte[] ReadFileSpan(IReadOnlyList<FileExtent> extents, long relativeOffset, int count)
+    {
+        if (count <= 0 || relativeOffset < 0)
+        {
+            return [];
+        }
+
+        var output = new byte[count];
+        var written = 0;
+        var cursor = 0L;
+        foreach (var extent in extents)
+        {
+            if (written >= count)
+            {
+                break;
+            }
+
+            var extentStart = cursor;
+            var extentEnd = cursor + extent.Length;
+            if (relativeOffset >= extentEnd)
+            {
+                cursor = extentEnd;
+                continue;
+            }
+
+            var withinExtent = Math.Max(0, relativeOffset - extentStart);
+            var readable = (int)Math.Min(count - written, extent.Length - withinExtent);
+            if (readable <= 0)
+            {
+                cursor = extentEnd;
+                continue;
+            }
+
+            var relativePartitionOffset = extent.Offset - Offset + withinExtent;
+            if (!_reader.Read(relativePartitionOffset, output.AsSpan(written, readable)))
+            {
+                return output.AsSpan(0, written).ToArray();
+            }
+
+            written += readable;
+            relativeOffset += readable;
+            cursor = extentEnd;
+        }
+
+        return written == output.Length ? output : output.AsSpan(0, written).ToArray();
+    }
+
+    private static IReadOnlyList<FileExtent> BuildVirtualExtents(IReadOnlyList<FileExtent> parentExtents, long relativeOffset, long length)
+    {
+        var rows = new List<FileExtent>();
+        if (relativeOffset < 0 || length <= 0)
+        {
+            return rows;
+        }
+
+        var remaining = length;
+        var cursor = 0L;
+        foreach (var extent in parentExtents)
+        {
+            if (remaining <= 0)
+            {
+                break;
+            }
+
+            var extentStart = cursor;
+            var extentEnd = cursor + extent.Length;
+            if (relativeOffset >= extentEnd)
+            {
+                cursor = extentEnd;
+                continue;
+            }
+
+            var withinExtent = Math.Max(0, relativeOffset - extentStart);
+            var readable = Math.Min(remaining, extent.Length - withinExtent);
+            if (readable > 0)
+            {
+                rows.Add(new FileExtent(extent.Offset + withinExtent, readable));
+                remaining -= readable;
+                relativeOffset += readable;
+            }
+
+            cursor = extentEnd;
+        }
+
+        return rows;
+    }
+
+    private static string GetSwitchContentKind(string name)
+    {
+        return Path.GetExtension(name).ToLowerInvariant() switch
+        {
+            ".nca" => "NCA Content",
+            ".cnmt" => "CNMT Metadata",
+            ".tik" => "Ticket",
+            ".cert" => "Certificate",
+            ".nro" => "NRO Executable",
+            ".nso" => "NSO Executable",
+            _ => "Package File"
+        };
+    }
+
+    private static string? TryDescribeNca(ReadOnlySpan<byte> header)
+    {
+        if (header.Length < 0x220 || !header.Slice(0x200, 3).SequenceEqual("NCA"u8))
+        {
+            return null;
+        }
+
+        var distribution = header[0x204] switch
+        {
+            0 => "download",
+            1 => "gamecard",
+            _ => $"0x{header[0x204]:X2}"
+        };
+        var contentType = header[0x205] switch
+        {
+            0 => "program",
+            1 => "meta",
+            2 => "control",
+            3 => "manual",
+            4 => "data",
+            5 => "public data",
+            _ => $"0x{header[0x205]:X2}"
+        };
+        var programId = BinaryPrimitives.ReadUInt64LittleEndian(header[0x210..]);
+        return $"Nintendo Switch NCA content archive; {distribution}, {contentType}, crypto type 0x{header[0x206]:X2}, key index 0x{header[0x207]:X2}, program/content id 0x{programId:X16}";
+    }
+
+    private static string? TryDescribeCnmt(ReadOnlySpan<byte> header)
+    {
+        if (header.Length < 0x20)
+        {
+            return null;
+        }
+
+        var titleId = BinaryPrimitives.ReadUInt64LittleEndian(header);
+        var version = BinaryPrimitives.ReadUInt32LittleEndian(header[8..]);
+        var type = header[0x0C] switch
+        {
+            0x01 => "system program",
+            0x02 => "system data",
+            0x03 => "system update",
+            0x04 => "boot image package",
+            0x05 => "boot image package safe",
+            0x80 => "application",
+            0x81 => "patch",
+            0x82 => "add-on content",
+            0x83 => "delta",
+            _ => $"0x{header[0x0C]:X2}"
+        };
+        var contentCount = BinaryPrimitives.ReadUInt16LittleEndian(header[0x0E..]);
+        var metaCount = BinaryPrimitives.ReadUInt16LittleEndian(header[0x10..]);
+        return $"Nintendo Switch CNMT content metadata; title id 0x{titleId:X16}, version {version}, type {type}, content entries {contentCount:N0}, meta entries {metaCount:N0}";
+    }
+
+    private static string ReadNullTerminatedUtf8(ReadOnlySpan<byte> value)
+    {
+        var length = value.IndexOf((byte)0);
+        if (length < 0)
+        {
+            length = value.Length;
+        }
+
+        return Encoding.UTF8.GetString(value[..length]);
     }
 
     private byte[] ReadCluster(uint cluster)

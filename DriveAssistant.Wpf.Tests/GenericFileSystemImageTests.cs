@@ -469,6 +469,7 @@ public sealed class GenericFileSystemImageTests
         Assert.Contains("header type 0x06", first.Detail);
         Assert.Contains("dev title/content container", first.Detail);
         Assert.Contains("display name: Sample Game", first.Detail);
+        Assert.Contains(rows, row => row.Kind == "XVDXML" && row.Detail.Contains("display name: Sample Game"));
 
         var second = rows.Single(row => row.SourceOffset == 0x5000);
         Assert.Contains("header type 0x41", second.Detail);
@@ -607,6 +608,48 @@ public sealed class GenericFileSystemImageTests
         Assert.Contains(rows, row => row.Kind == "XCI");
         Assert.Contains(rows, row => row.Kind == "NRO");
         Assert.Contains(rows, row => row.Kind == "NSO");
+    }
+
+    [Fact]
+    public void GenericCarver_ExpandsSwitchPfs0EntriesAndNcaSections()
+    {
+        var image = new byte[0x5000];
+        Encoding.ASCII.GetBytes("PFS0").CopyTo(image.AsSpan(0));
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(4), 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(8), 0x20);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x10), 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x18), 0x40);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x20), 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x28), 0x400);
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x30), 0x2000);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x38), 0x0A);
+        Encoding.ASCII.GetBytes("meta.cnmt\0program.nca\0").CopyTo(image.AsSpan(0x40));
+        var headerSize = 0x10 + 2 * 0x18 + 0x20;
+
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(headerSize), 0x0102030405060708);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(headerSize + 8), 7);
+        image[headerSize + 0x0C] = 0x80;
+        BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(headerSize + 0x0E), 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(headerSize + 0x10), 1);
+
+        var ncaOffset = headerSize + 0x400;
+        Encoding.ASCII.GetBytes("NCA3").CopyTo(image.AsSpan(ncaOffset + 0x200));
+        image[ncaOffset + 0x204] = 0;
+        image[ncaOffset + 0x205] = 0;
+        image[ncaOffset + 0x206] = 2;
+        image[ncaOffset + 0x207] = 1;
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(ncaOffset + 0x210), 0x0100FF0011223344);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncaOffset + 0x240), 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncaOffset + 0x244), 4);
+
+        using var temp = new TempFile(image);
+        var carver = new GenericFileCarver(temp.Path, 0, image.Length, 0, 0x1000, "switch package", ScanProfile.Balanced);
+        var rows = carver.Analyze(CancellationToken.None, null);
+
+        Assert.Contains(rows, row => row.Kind == "NSP" && row.Detail.Contains("2 file entries"));
+        Assert.Contains(rows, row => row.Kind == "CNMT" && row.Detail.Contains("title id 0x0102030405060708"));
+        Assert.Contains(rows, row => row.Kind == "NCA" && row.Detail.Contains("program/content id 0x0100FF0011223344"));
+        Assert.Contains(rows, row => row.Kind == "NCASECTION" && row.Size == 0x400);
     }
 
     [Fact]

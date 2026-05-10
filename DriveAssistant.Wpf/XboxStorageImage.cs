@@ -494,6 +494,15 @@ public sealed class XboxNtfsVolume : IDisposable
         var firstOffset = physicalExtents.Count == 0 ? Offset : physicalExtents[0].Offset;
         var firstCluster = physicalExtents.Count == 0 || ClusterSize <= 0 ? 0 : (long)(physicalExtents[0].Offset - Offset) / ClusterSize;
         var childCounts = isDirectory ? CountChildren(normalized) : (Folders: 0, Files: 0);
+        var metadataStatus = metadata == null ? "Active filesystem entry" : metadata.InUse ? "Active MFT record" : "Deleted MFT record";
+        if (!isDirectory && physicalExtents.Count > 0 && IsXvdOrXvcName(name))
+        {
+            using var stream = new FileStream(_sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
+            var packageMetadata = GenericFileCarver.TryReadXvdMetadata(stream, physicalExtents[0].Offset, length);
+            metadataStatus = packageMetadata == null
+                ? $"{metadataStatus}; Xbox One/Series XVD/XVC package candidate"
+                : $"{metadataStatus}; {packageMetadata.Detail}";
+        }
 
         return new XboxFileEntry(
             this,
@@ -516,7 +525,7 @@ public sealed class XboxNtfsVolume : IDisposable
             MftRecordIndex: metadata?.Index ?? GetMftIndexFromFileId(fileId),
             SequenceNumber: metadata?.SequenceNumber ?? 0,
             ParentMftRecordIndex: metadata?.ParentIndex ?? -1,
-            MetadataStatus: metadata == null ? "Active filesystem entry" : metadata.InUse ? "Active MFT record" : "Deleted MFT record",
+            MetadataStatus: metadataStatus,
             AlternateDataStreams: alternateDataStreams);
     }
 
@@ -901,6 +910,12 @@ public sealed class XboxNtfsVolume : IDisposable
 
         var normalized = path.Replace('/', '\\');
         return normalized.StartsWith('\\') ? normalized : "\\" + normalized;
+    }
+
+    private static bool IsXvdOrXvcName(string name)
+    {
+        return name.EndsWith(".xvd", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(".xvc", StringComparison.OrdinalIgnoreCase);
     }
 
     private static T SafeGet<T>(Func<T> getter, T fallback)
