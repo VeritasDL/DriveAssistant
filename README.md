@@ -1,6 +1,6 @@
 # Drive Assistant
 
-Drive Assistant is a Windows disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images. It is designed for read-only analysis: open an image, inspect the partition layout, browse recoverable files, run metadata scans, carve known file formats, and export data without modifying the source.
+Drive Assistant is a disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images. The desktop UI is Windows/WPF, and the `drive-assistant` CLI runs on Linux/macOS/Windows for terminal workflows. It is designed for read-only analysis: open an image, inspect the partition layout, browse recoverable files, run metadata scans, carve known file formats, and export data without modifying the source.
 
 The project has a general recovery-tool foundation with a strong focus on console storage formats. The long-term goal is support for most Nintendo console drives, all PlayStation and Xbox console HDDs/SSDs where technically practical, and common PC filesystems.
 
@@ -161,9 +161,17 @@ Download the latest Windows x64 ZIP from [GitHub Releases](https://github.com/ra
 
 The portable release package is self-contained and includes the .NET runtime.
 
+Linux users can download the latest `DriveAssistant.Cli-*-linux-x64.tar.gz` or `DriveAssistant.Cli-*-linux-arm64.tar.gz` release asset, extract it, and run:
+
+```bash
+chmod +x ./drive-assistant
+./drive-assistant --help
+```
+
 ## Requirements
 
-- Windows 10/11.
+- Windows 10/11 for the WPF desktop app.
+- Linux x64 or arm64 for CLI release tarballs. Ubuntu, Debian, Fedora, Arch, and Nix/NixOS source workflows are supported through .NET 8.
 - .NET 8 SDK for building from source.
 - Visual Studio 2022 is optional but recommended for UI work.
 
@@ -186,6 +194,22 @@ Run the app from the build output:
 
 ```powershell
 & ".\DriveAssistant.Wpf\bin\Release\net8.0-windows\Drive Assistant.exe"
+```
+
+Run the cross-platform CLI from source:
+
+```bash
+dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- info ./disk.img
+dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- list ./disk.img --partition 0 --recursive
+dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- export ./disk.img /path/in/image/file.bin ./file.bin --partition 0
+```
+
+Nix source workflow:
+
+```bash
+nix develop
+dotnet test DriveAssistant.sln
+nix run .#drive-assistant -- info ./disk.img
 ```
 
 ## Test
@@ -216,11 +240,19 @@ Self-contained Windows x64 publish:
 dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o .\publish\DriveAssistant-win-x64
 ```
 
+Self-contained Linux CLI publish:
+
+```bash
+dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-x64
+dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-arm64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-arm64
+```
+
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
-| `DriveAssistant.Wpf` | Active WPF desktop application, published as `Drive Assistant.exe`. |
+| `DriveAssistant.Wpf` | Active Windows WPF desktop application, published as `Drive Assistant.exe`. |
+| `DriveAssistant.Cli` | Cross-platform terminal host for Linux/macOS/Windows, published as `drive-assistant`. |
 | `DriveAssistant.Wpf.Tests` | Tests for image readers and WPF-supporting scanners. |
 | `DriveAssistant.Shared` | Shared support files used by the WPF app. |
 | `FATX` | Core FATX reader, metadata scanner, and legacy FATX signature carver library. |

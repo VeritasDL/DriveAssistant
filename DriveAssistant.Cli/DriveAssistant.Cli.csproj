@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <AssemblyName>drive-assistant</AssemblyName>
+    <Product>Drive Assistant CLI</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FATX\FATX.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\RawImage.cs" Link="DiskTypes\RawImage.cs" />
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\CompressedImage.cs" Link="DiskTypes\CompressedImage.cs" />
+    <Compile Include="..\DriveAssistant.Shared\DiskTypes\ImgcDecoder.cs" Link="DiskTypes\ImgcDecoder.cs" />
+    <Compile Include="..\DriveAssistant.Shared\Utilities\BuildInfo.cs" Link="Utilities\BuildInfo.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\CdIso9660Volume.cs" Link="Core\CdIso9660Volume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\CsoPspImage.cs" Link="Core\CsoPspImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\Fat12Volume.cs" Link="Core\Fat12Volume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\GenericFileSystemImage.cs" Link="Core\GenericFileSystemImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\GenericRecoveryScanners.cs" Link="Core\GenericRecoveryScanners.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\LegacyConsoleStorageImage.cs" Link="Core\LegacyConsoleStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\ManagedPs3StorageImage.cs" Link="Core\ManagedPs3StorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\ManagedPs4StorageImage.cs" Link="Core\ManagedPs4StorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\NintendoNandCrypto.cs" Link="Core\NintendoNandCrypto.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\NintendoStorageImage.cs" Link="Core\NintendoStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\PlayStationArchiveDisk.cs" Link="Core\PlayStationArchiveDisk.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\PlayStationPackageVolume.cs" Link="Core\PlayStationPackageVolume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\PlayStationPortableStorageImage.cs" Link="Core\PlayStationPortableStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\PlayStationStorageImage.cs" Link="Core\PlayStationStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\Ps2StorageImage.cs" Link="Core\Ps2StorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\RawConsoleVolume.cs" Link="Core\RawConsoleVolume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\RvzGameCubeImage.cs" Link="Core\RvzGameCubeImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\SgiIrixStorageImage.cs" Link="Core\SgiIrixStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\SwitchStorageImage.cs" Link="Core\SwitchStorageImage.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\WiiKeyMaterial.cs" Link="Core\WiiKeyMaterial.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\WiiNandVolume.cs" Link="Core\WiiNandVolume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\WiiUKeyMaterial.cs" Link="Core\WiiUKeyMaterial.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\WiiUWfsInspector.cs" Link="Core\WiiUWfsInspector.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\WiiUWfsVolume.cs" Link="Core\WiiUWfsVolume.cs" />
+    <Compile Include="..\DriveAssistant.Wpf\XboxStorageImage.cs" Link="Core\XboxStorageImage.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\DriveAssistant.Shared\custom_carvers.json" Link="custom_carvers.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiscUtils.Ntfs" Version="0.16.13" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+
+</Project>

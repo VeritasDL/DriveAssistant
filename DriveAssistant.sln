@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriveAssistant.Wpf", "Drive
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DriveAssistant.Wpf.Tests", "DriveAssistant.Wpf.Tests\DriveAssistant.Wpf.Tests.csproj", "{18441D7F-1E5D-4868-BC68-94086150E45E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriveAssistant.Cli", "DriveAssistant.Cli\DriveAssistant.Cli.csproj", "{E6571F8E-4790-471A-8B73-589BDDDCF61F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -69,6 +71,18 @@ Global
 		{18441D7F-1E5D-4868-BC68-94086150E45E}.Release|x64.Build.0 = Release|Any CPU
 		{18441D7F-1E5D-4868-BC68-94086150E45E}.Release|x86.ActiveCfg = Release|Any CPU
 		{18441D7F-1E5D-4868-BC68-94086150E45E}.Release|x86.Build.0 = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|x64.Build.0 = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Debug|x86.Build.0 = Debug|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x64.ActiveCfg = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x64.Build.0 = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x86.ActiveCfg = Release|Any CPU
+		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

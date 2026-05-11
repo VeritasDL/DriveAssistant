@@ -152,3 +152,89 @@ jobs:
           } else {
             gh release create $version $zipAsset $shaAsset --title "Drive Assistant $version" --notes-file release-notes.md --verify-tag
           }
+
+  package-linux-cli:
+    needs: package-windows
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64]
+
+    env:
+      DOTNET_NOLOGO: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          if ($version -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Version '$version' must look like v0.3.54."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore
+        run: dotnet restore DriveAssistant.sln
+
+      - name: Publish self-contained Linux CLI
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          publish_dir="$PWD/publish/DriveAssistant.Cli-$version-$rid"
+          dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r "$rid" --self-contained true -o "$publish_dir"
+          cat > "$publish_dir/RUNNING_DRIVE_ASSISTANT_CLI.txt" <<EOF
+          Drive Assistant CLI $version ($rid)
+
+          Run:
+            ./drive-assistant --help
+
+          The CLI is read-only against source images and is intended for Linux/macOS/terminal workflows.
+          EOF
+          echo "publish_dir=$publish_dir" >> "$GITHUB_ENV"
+
+      - name: Create tarball and checksum
+        id: package
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          archive="$PWD/publish/DriveAssistant.Cli-$version-$rid.tar.gz"
+          tar -C "$publish_dir" -czf "$archive" .
+          sha="$(sha256sum "$archive" | awk '{print $1}')"
+          sha_file="$archive.sha256"
+          printf "%s  %s\n" "$sha" "$(basename "$archive")" > "$sha_file"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha_file" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DriveAssistant.Cli-${{ steps.version.outputs.version }}-${{ matrix.rid }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.sha }}
+
+      - name: Publish Linux CLI assets
+        if: github.event_name == 'push' || inputs.publish_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          archive_asset="${{ steps.package.outputs.archive }}#DriveAssistant.Cli-$version-$rid.tar.gz"
+          sha_asset="${{ steps.package.outputs.sha }}#DriveAssistant.Cli-$version-$rid.tar.gz.sha256"
+          gh release upload "$version" "$archive_asset" "$sha_asset" --clobber
