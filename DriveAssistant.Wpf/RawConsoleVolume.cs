@@ -9,6 +9,7 @@ internal sealed class RawConsoleVolume : GenericFileSystemVolume
 {
     private readonly string _description;
     private readonly List<GenericFileSystemEntry> _root = [];
+    private readonly List<GenericFileSystemEntry> _deleted = [];
     private readonly Dictionary<string, string> _externalSourcePaths = new(StringComparer.OrdinalIgnoreCase);
 
     public RawConsoleVolume(
@@ -37,6 +38,11 @@ internal sealed class RawConsoleVolume : GenericFileSystemVolume
         _root.AddRange(entries);
     }
 
+    public void AddDeletedEntries(IEnumerable<GenericFileSystemEntry> entries)
+    {
+        _deleted.AddRange(entries);
+    }
+
     public void RegisterExternalSource(GenericFileSystemEntry entry, string sourcePath)
     {
         _externalSourcePaths[entry.Path] = sourcePath;
@@ -44,8 +50,9 @@ internal sealed class RawConsoleVolume : GenericFileSystemVolume
 
     public override IReadOnlyList<GenericFileSystemEntry> ScanDeleted(CancellationToken cancellationToken, IProgress<int>? progress)
     {
-        progress?.Report(0);
-        return [];
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Report(100);
+        return _deleted.ToList();
     }
 
     protected override long ClusterToOffset(uint cluster)

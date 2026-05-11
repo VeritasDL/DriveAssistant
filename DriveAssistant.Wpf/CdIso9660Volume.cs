@@ -18,6 +18,7 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
     private readonly int _dataOffset;
     private readonly int _logicalSectorBase;
     private readonly List<GenericFileSystemEntry> _root = [];
+    private readonly HashSet<long> _activeRecordOffsets = [];
 
     private CdIso9660Volume(
         string sourcePath,
@@ -58,8 +59,46 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
 
     public override IReadOnlyList<GenericFileSystemEntry> ScanDeleted(CancellationToken cancellationToken, IProgress<int>? progress)
     {
+        var rows = new List<GenericFileSystemEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var stream = new FileStream(_dataPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
+        var sectorCount = stream.Length / Math.Max(1, _sectorSize);
+        var sector = new byte[LogicalSectorSize];
+        for (var physicalSector = 0L; physicalSector < sectorCount; physicalSector++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var logicalSector = checked((int)Math.Min(int.MaxValue, physicalSector + _logicalSectorBase));
+            if (!ReadLogicalSector(stream, logicalSector, sector))
+            {
+                continue;
+            }
+
+            foreach (var candidate in ScanDirectoryRecordCandidates(sector, logicalSector))
+            {
+                if (_activeRecordOffsets.Contains(candidate.RecordOffset) || candidate.Name is "." or "..")
+                {
+                    continue;
+                }
+
+                var key = $"{candidate.Lba:X8}:{candidate.Length:X8}:{candidate.Name}";
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+
+                rows.Add(candidate.IsDirectory
+                    ? CreateScannedDirectoryEntry(candidate)
+                    : CreateScannedFileEntry(candidate));
+            }
+
+            if ((physicalSector & 0xFF) == 0)
+            {
+                progress?.Report((int)Math.Min(99, physicalSector * 100 / Math.Max(1, sectorCount)));
+            }
+        }
+
         progress?.Report(100);
-        return [];
+        return rows;
     }
 
     public override void CopyFile(GenericFileSystemEntry entry, string destinationPath, Action<long>? progress, CancellationToken cancellationToken)
@@ -215,6 +254,7 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
             }
 
             var record = directory.AsSpan(offset, recordLength);
+            _activeRecordOffsets.Add(logicalSector * (long)LogicalSectorSize + offset);
             offset += recordLength;
             var nameLength = record[32];
             if (33 + nameLength > record.Length)
@@ -323,6 +363,136 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
             MetadataStatus = "Active ISO9660 file record",
             Extents = [new FileExtent(lba * (long)LogicalSectorSize, length)]
         };
+    }
+
+    private GenericFileSystemEntry CreateScannedDirectoryEntry(IsoDirectoryRecordCandidate candidate)
+    {
+        var name = $"orphan_iso_dir_{candidate.Lba:X8}_{SanitizeName(candidate.Name)}";
+        return new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = "/$ORPHANED/" + name,
+            Name = name,
+            Kind = "Directory",
+            IsDirectory = true,
+            Length = candidate.Length,
+            Offset = candidate.RecordOffset,
+            Cluster = candidate.Lba,
+            IsDeleted = true,
+            Attributes = $"ISO9660 flags 0x{candidate.Flags:X2}",
+            MetadataStatus = "Unreferenced ISO9660 directory record candidate",
+            Extents = []
+        };
+    }
+
+    private GenericFileSystemEntry CreateScannedFileEntry(IsoDirectoryRecordCandidate candidate)
+    {
+        var name = $"orphan_iso_file_{candidate.Lba:X8}_{SanitizeName(candidate.Name)}";
+        return new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = "/$ORPHANED/" + name,
+            Name = name,
+            Kind = "File",
+            IsDirectory = false,
+            Length = candidate.Length,
+            Offset = candidate.RecordOffset,
+            Cluster = candidate.Lba,
+            IsDeleted = true,
+            Attributes = $"ISO9660 flags 0x{candidate.Flags:X2}",
+            MetadataStatus = "Unreferenced ISO9660 file record candidate",
+            Extents = [new FileExtent(candidate.Lba * (long)LogicalSectorSize, candidate.Length)]
+        };
+    }
+
+    private static IEnumerable<IsoDirectoryRecordCandidate> ScanDirectoryRecordCandidates(byte[] sector, int logicalSector)
+    {
+        for (var offset = 0; offset + 34 <= sector.Length; offset++)
+        {
+            var recordLength = sector[offset];
+            if (recordLength < 34 || offset + recordLength > sector.Length)
+            {
+                continue;
+            }
+
+            var record = sector.AsSpan(offset, recordLength);
+            if (!TryReadDirectoryRecordCandidate(record, logicalSector * (long)LogicalSectorSize + offset, out var candidate))
+            {
+                continue;
+            }
+
+            yield return candidate;
+            offset += recordLength - 1;
+        }
+    }
+
+    private static bool TryReadDirectoryRecordCandidate(ReadOnlySpan<byte> record, long recordOffset, out IsoDirectoryRecordCandidate candidate)
+    {
+        candidate = default;
+        if (record.Length < 34 || record[0] != record.Length)
+        {
+            return false;
+        }
+
+        var lbaLe = BinaryPrimitives.ReadUInt32LittleEndian(record[2..]);
+        var lbaBe = BinaryPrimitives.ReadUInt32BigEndian(record[6..]);
+        var lengthLe = BinaryPrimitives.ReadUInt32LittleEndian(record[10..]);
+        var lengthBe = BinaryPrimitives.ReadUInt32BigEndian(record[14..]);
+        if (lbaLe != lbaBe || lengthLe != lengthBe || lengthLe > 512U * 1024U * 1024U)
+        {
+            return false;
+        }
+
+        var flags = record[25];
+        var nameLength = record[32];
+        if (nameLength == 0 || 33 + nameLength > record.Length || record[28] == 0 || record[31] == 0)
+        {
+            return false;
+        }
+
+        var rawName = record.Slice(33, nameLength);
+        if (!IsIsoFileIdentifier(rawName))
+        {
+            return false;
+        }
+
+        var name = DecodeFileIdentifier(rawName);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        candidate = new IsoDirectoryRecordCandidate(name, lbaLe, lengthLe, flags, recordOffset, (flags & 0x02) != 0);
+        return true;
+    }
+
+    private static bool IsIsoFileIdentifier(ReadOnlySpan<byte> name)
+    {
+        if (name.Length == 1 && name[0] is 0 or 1)
+        {
+            return true;
+        }
+
+        foreach (var value in name)
+        {
+            if (value < 0x20 || value > 0x7E || value is (byte)'/' or (byte)'\\')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string SanitizeName(string name)
+    {
+        var builder = new StringBuilder(name.Length);
+        foreach (var c in name)
+        {
+            builder.Append(char.IsLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_');
+        }
+
+        return builder.Length == 0 ? "entry" : builder.ToString();
     }
 
     private static IEnumerable<CdTrackCandidate> CreateCandidates(string sourcePath)
@@ -511,4 +681,12 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
         long ByteOffset,
         string FamilyText,
         int TrackNumber = 0);
+
+    private readonly record struct IsoDirectoryRecordCandidate(
+        string Name,
+        uint Lba,
+        uint Length,
+        byte Flags,
+        long RecordOffset,
+        bool IsDirectory);
 }

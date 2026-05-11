@@ -1151,7 +1151,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static bool IsSupportedImagePath(string path)
     {
-        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".cue" or ".raw" or ".iso" or ".wbfs" or ".zip" or ".wud" or ".wux" or ".gcm" or ".gdi" or ".cdi" or ".cim" or ".vmu" or ".vms" or ".dci" or ".hex" or ".mcr" or ".mcd" or ".psx" or ".ps2" or ".z64" or ".n64" or ".v64" or ".rom" or ".sra" or ".eep" or ".fla" or ".mpk" or ".gb" or ".gbc" or ".gba" or ".sav" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
+        return Path.GetExtension(path).ToLowerInvariant() is ".img" or ".imgc" or ".bin" or ".cue" or ".raw" or ".iso" or ".rvz" or ".wbfs" or ".zip" or ".wud" or ".wux" or ".gcm" or ".gdi" or ".cdi" or ".cim" or ".vmu" or ".vms" or ".dci" or ".hex" or ".mcr" or ".mcd" or ".psx" or ".ps2" or ".z64" or ".n64" or ".v64" or ".rom" or ".sra" or ".eep" or ".fla" or ".mpk" or ".gb" or ".gbc" or ".gba" or ".sav" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
     }
 
     private void AddRecentImage(string path)

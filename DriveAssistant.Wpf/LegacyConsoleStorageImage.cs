@@ -219,7 +219,9 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         for (var block = 1; block <= 15; block++)
         {
             var frame = directory.AsSpan((block - 1) * Ps1DirectoryFrameSize, Ps1DirectoryFrameSize);
-            if (!IsActivePs1DirectoryFrame(frame))
+            var active = IsActivePs1DirectoryFrame(frame);
+            var deleted = IsDeletedPs1DirectoryFrame(frame);
+            if (!active && !deleted)
             {
                 continue;
             }
@@ -238,7 +240,24 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
                 continue;
             }
 
-            volume.AddRootEntries([CreateFileEntry(volume, "/" + name, name, "PS1 Save Block", offset, saveLength, $"directory state 0x{frame[0]:X2}; blocks {blocks}", "Active PS1 memory-card directory entry")]);
+            var entry = CreateFileEntry(
+                volume,
+                "/" + name,
+                name,
+                "PS1 Save Block",
+                offset,
+                saveLength,
+                $"directory state 0x{frame[0]:X2}; blocks {blocks}",
+                deleted ? "Deleted PS1 memory-card directory entry" : "Active PS1 memory-card directory entry",
+                deleted);
+            if (deleted)
+            {
+                volume.AddDeletedEntries([entry]);
+            }
+            else
+            {
+                volume.AddRootEntries([entry]);
+            }
         }
     }
 
@@ -314,18 +333,19 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         };
     }
 
-    private static GenericFileSystemEntry CreateFileEntry(RawConsoleVolume volume, string path, string name, string kind, long offset, long length, string attributes, string status)
+    private static GenericFileSystemEntry CreateFileEntry(RawConsoleVolume volume, string path, string name, string kind, long offset, long length, string attributes, string status, bool isDeleted = false)
     {
         return new GenericFileSystemEntry
         {
             Volume = volume,
             Path = path,
-            Name = name,
+            Name = isDeleted ? $"_{name.TrimStart('_')}" : name,
             Kind = kind,
             IsDirectory = false,
             Length = length,
             Offset = offset,
             Cluster = 0,
+            IsDeleted = isDeleted,
             Attributes = attributes,
             MetadataStatus = status,
             Extents = length > 0 ? [new FileExtent(offset, length)] : []
@@ -336,6 +356,13 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
     {
         return frame.Length >= Ps1DirectoryFrameSize
                && frame[0] is 0x51 or 0x52 or 0x53
+               && IsMostlyPrintable(frame.Slice(0x0A, 20));
+    }
+
+    private static bool IsDeletedPs1DirectoryFrame(ReadOnlySpan<byte> frame)
+    {
+        return frame.Length >= Ps1DirectoryFrameSize
+               && frame[0] is 0xA1 or 0xA2 or 0xA3
                && IsMostlyPrintable(frame.Slice(0x0A, 20));
     }
 

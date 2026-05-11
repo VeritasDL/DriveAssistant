@@ -46,6 +46,8 @@ internal sealed class NintendoStorageImage : IDisposable
     {
         var activePath = sourcePath;
         string? temporaryPath = null;
+        var temporaryPartitionPaths = new List<string>();
+        var rvzMountStatus = string.Empty;
         if (Path.GetExtension(sourcePath).Equals(".zip", StringComparison.OrdinalIgnoreCase)
             && TryExtractSingleImageEntry(sourcePath, out var extractedPath))
         {
@@ -53,9 +55,19 @@ internal sealed class NintendoStorageImage : IDisposable
             temporaryPath = extractedPath;
         }
 
+        if (RvzGameCubeImage.TryDecompressToTemporaryIso(activePath, out var decompressedRvzPath, out rvzMountStatus))
+        {
+            if (temporaryPath != null)
+            {
+                temporaryPartitionPaths.Add(temporaryPath);
+            }
+
+            activePath = decompressedRvzPath;
+            temporaryPath = decompressedRvzPath;
+        }
+
         var length = new FileInfo(activePath).Length;
         var partitions = new List<PartitionModel>();
-        var temporaryPartitionPaths = new List<string>();
         using var stream = new FileStream(activePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess);
         var header = ReadHeader(stream, 0x8000);
         var keyStatus = WiiUKeyMaterial.TryLoad(keyPath, out var keys, out var loadStatus)
@@ -69,7 +81,16 @@ internal sealed class NintendoStorageImage : IDisposable
 
         if (GameCubeDiscVolume.TryOpen(activePath, length, out var gameCubeVolume, out var gameCubeStatus))
         {
+            if (!string.IsNullOrWhiteSpace(rvzMountStatus))
+            {
+                gameCubeStatus = $"{rvzMountStatus} {gameCubeStatus}";
+            }
+
             partitions.Add(new PartitionModel(gameCubeVolume, gameCubeStatus));
+        }
+        else if (TryCreateGameCubeRvzPartition(activePath, length, header, out var rvzPartition))
+        {
+            partitions.Add(rvzPartition);
         }
         else if (LooksLikeWiiDisc(header))
         {
@@ -177,6 +198,36 @@ internal sealed class NintendoStorageImage : IDisposable
         return new PartitionModel(volume, status);
     }
 
+    private static bool TryCreateGameCubeRvzPartition(string sourcePath, long length, ReadOnlySpan<byte> header, out PartitionModel partition)
+    {
+        partition = null!;
+        if (!LooksLikeGameCubeRvz(header, out var discHeaderOffset))
+        {
+            return false;
+        }
+
+        var candidate = new GenericPartitionCandidate(0, Guid.Empty, 0, length, Path.GetFileName(sourcePath), SectorSize);
+        var volume = new RawConsoleVolume(sourcePath, candidate, "Nintendo GameCube RVZ", "Dolphin RVZ compressed GameCube image");
+        var entries = new List<GenericFileSystemEntry>
+        {
+            CreateRawSectionEntry(volume, "/" + Path.GetFileName(sourcePath), Path.GetFileName(sourcePath), "RVZ Container", 0, length, "Whole RVZ compressed image raw export entry"),
+            CreateRawSectionEntry(volume, "/rvz-header.bin", "rvz-header.bin", "RVZ Header", 0, Math.Min(discHeaderOffset, length), "Dolphin RVZ container header")
+        };
+
+        var discHeaderLength = Math.Min(0x440, Math.Max(0, length - discHeaderOffset));
+        if (discHeaderLength > 0)
+        {
+            entries.Add(CreateRawSectionEntry(volume, "/gamecube-disc-header.bin", "gamecube-disc-header.bin", "GameCube Disc Header", discHeaderOffset, discHeaderLength, "Embedded GameCube disc header from RVZ metadata"));
+        }
+
+        volume.AddRootEntries(entries);
+        var title = ReadGameCubeDiscTitle(header, discHeaderOffset);
+        var statusTitle = string.IsNullOrWhiteSpace(title) ? string.Empty : $" '{title}'";
+        var status = $"Detected GameCube RVZ compressed image{statusTitle}, but native decompression did not mount this file. Header and raw RVZ export are available; convert to ISO/GCM if this RVZ uses unsupported compression or layout features.";
+        partition = new PartitionModel(volume, status);
+        return true;
+    }
+
     private static PartitionModel CreateNcchPartition(string sourcePath, long length, ReadOnlySpan<byte> header)
     {
         var candidate = new GenericPartitionCandidate(0, Guid.Empty, 0, length, "Nintendo 3DS NCCH", SectorSize);
@@ -270,8 +321,40 @@ internal sealed class NintendoStorageImage : IDisposable
             return false;
         }
 
-        var magic = BinaryPrimitives.ReadUInt32BigEndian(header[0x18..]);
-        return magic is 0x5D1C9EA3 or 0xC2339F3D;
+        var wiiMagic = BinaryPrimitives.ReadUInt32BigEndian(header[0x18..]);
+        var gameCubeMagic = BinaryPrimitives.ReadUInt32BigEndian(header[0x1C..]);
+        return wiiMagic == 0x5D1C9EA3 || gameCubeMagic == 0xC2339F3D;
+    }
+
+    private static bool LooksLikeGameCubeRvz(ReadOnlySpan<byte> header, out int discHeaderOffset)
+    {
+        discHeaderOffset = 0;
+        if (header.Length < 0x80 || !StartsWith(header, "RVZ"u8))
+        {
+            return false;
+        }
+
+        for (var offset = 0x20; offset + 0x1C <= header.Length; offset += 4)
+        {
+            if (BinaryPrimitives.ReadUInt32BigEndian(header[(offset + 0x1C)..]) == 0xC2339F3D)
+            {
+                discHeaderOffset = offset;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ReadGameCubeDiscTitle(ReadOnlySpan<byte> header, int discHeaderOffset)
+    {
+        if (discHeaderOffset < 0 || discHeaderOffset + 0x20 >= header.Length)
+        {
+            return string.Empty;
+        }
+
+        var titleOffset = discHeaderOffset + 0x20;
+        return ReadAscii(header.Slice(titleOffset, Math.Min(0x3E0, header.Length - titleOffset)));
     }
 
     private static bool LooksLikeWiiUStorage(ReadOnlySpan<byte> header)
@@ -389,10 +472,10 @@ internal sealed class NintendoStorageImage : IDisposable
                 continue;
             }
 
-            var magic = BinaryPrimitives.ReadUInt32BigEndian(probe[0x18..]);
-            var discLength = magic == 0xC2339F3D ? GameCubeDiscSize : WiiSingleLayerDiscSize;
+            var gameCubeDisc = BinaryPrimitives.ReadUInt32BigEndian(probe[0x1C..]) == 0xC2339F3D;
+            var discLength = gameCubeDisc ? GameCubeDiscSize : WiiSingleLayerDiscSize;
             discLength = Math.Min(discLength, length - offset);
-            var name = magic == 0xC2339F3D ? $"RVT-H GameCube bank {bankIndex}" : $"RVT-H Wii bank {bankIndex}";
+            var name = gameCubeDisc ? $"RVT-H GameCube bank {bankIndex}" : $"RVT-H Wii bank {bankIndex}";
             var candidate = new GenericPartitionCandidate(bankIndex, Guid.Empty, offset, discLength, name, SectorSize);
             var status = "RVT-H disc bank detected from disc header; raw export and partition-scoped carving are available.";
             bankRows.Add(new PartitionModel(new RawConsoleVolume(sourcePath, candidate, "Nintendo Wii RVT-H", status, CreateRawEntry(sourcePath, candidate, "RVT-H Disc Bank")), status));
@@ -615,7 +698,7 @@ internal sealed class NintendoStorageImage : IDisposable
 
     private static bool IsImageExtension(string name)
     {
-        return Path.GetExtension(name).ToLowerInvariant() is ".img" or ".bin" or ".raw" or ".iso" or ".wbfs" or ".wud" or ".wux" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
+        return Path.GetExtension(name).ToLowerInvariant() is ".img" or ".bin" or ".raw" or ".iso" or ".rvz" or ".gcm" or ".wbfs" or ".wud" or ".wux" or ".nds" or ".dsi" or ".3ds" or ".cci" or ".cxi" or ".cfa" or ".csu" or ".app";
     }
 
     private static void TryDeleteTemporary(string path)
@@ -639,6 +722,7 @@ internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
     private const int SectorSize = 512;
     private const uint GameCubeMagic = 0xC2339F3D;
     private readonly List<GenericFileSystemEntry> _root = [];
+    private readonly Dictionary<string, string> _externalSourcePaths = new(StringComparer.OrdinalIgnoreCase);
 
     private GameCubeDiscVolume(string sourcePath, GenericPartitionCandidate partition)
         : base(sourcePath, partition, "Nintendo GameCube FST")
@@ -665,7 +749,7 @@ internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
             return false;
         }
 
-        if (BinaryPrimitives.ReadUInt32BigEndian(header[0x18..]) != GameCubeMagic)
+        if (BinaryPrimitives.ReadUInt32BigEndian(header[0x1C..]) != GameCubeMagic)
         {
             return false;
         }
@@ -694,7 +778,8 @@ internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
         var candidate = new GenericPartitionCandidate(0, Guid.Empty, 0, length, candidateName, SectorSize);
         volume = new GameCubeDiscVolume(sourcePath, candidate);
         volume.LoadDirectory(fst, nameTableOffset, 1, checked((int)entryCount), "/", volume._root);
-        status = $"Mounted Nintendo GameCube FST, {volume._root.Count:N0} root entries. File export, carving, and raw inspection are available.";
+        volume.AddSidecarMetadata(sourcePath);
+        status = $"Mounted Nintendo GameCube FST, {volume._root.Count:N0} root entries. File export, sidecar metadata export, carving, and raw inspection are available.";
         return true;
     }
 
@@ -704,6 +789,35 @@ internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
     {
         progress?.Report(100);
         return [];
+    }
+
+    public override void CopyFile(GenericFileSystemEntry entry, string destinationPath, Action<long>? progress, CancellationToken cancellationToken)
+    {
+        if (_externalSourcePaths.TryGetValue(entry.Path, out var externalSourcePath))
+        {
+            const int bufferSize = 0x100000;
+            var buffer = new byte[bufferSize];
+            using var input = new FileStream(externalSourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize, FileOptions.RandomAccess);
+            using var output = File.Create(destinationPath);
+            var remaining = input.Length;
+            while (remaining > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                if (read == 0)
+                {
+                    break;
+                }
+
+                output.Write(buffer, 0, read);
+                remaining -= read;
+                progress?.Invoke(read);
+            }
+
+            return;
+        }
+
+        base.CopyFile(entry, destinationPath, progress, cancellationToken);
     }
 
     protected override long ClusterToOffset(uint cluster)
@@ -793,6 +907,64 @@ internal sealed class GameCubeDiscVolume : GenericFileSystemVolume
             MetadataStatus = "Active GameCube file system table file entry",
             Extents = [new FileExtent(offset, length)]
         };
+    }
+
+    private void AddSidecarMetadata(string sourcePath)
+    {
+        var sidecars = new List<(string Path, string Name, string Kind, string Status)>();
+        var bcaPath = Path.ChangeExtension(sourcePath, ".bca");
+        if (File.Exists(bcaPath))
+        {
+            sidecars.Add((bcaPath, "bca.bin", "GameCube BCA", "GameCube burst cutting area sidecar"));
+        }
+
+        var dumpInfoPath = Path.Combine(Path.GetDirectoryName(sourcePath) ?? string.Empty, Path.GetFileNameWithoutExtension(sourcePath) + "-dumpinfo.txt");
+        if (File.Exists(dumpInfoPath))
+        {
+            sidecars.Add((dumpInfoPath, "dumpinfo.txt", "Dump Info", "CleanRip/GameCube dump verification sidecar"));
+        }
+
+        if (sidecars.Count == 0)
+        {
+            return;
+        }
+
+        var metadataDirectory = new GenericFileSystemEntry
+        {
+            Volume = this,
+            Path = "/$disc",
+            Name = "$disc",
+            Kind = "Directory",
+            IsDirectory = true,
+            Length = 0,
+            Offset = 0,
+            Cluster = 0,
+            Attributes = "GameCube sidecar metadata",
+            MetadataStatus = "GameCube disc sidecar metadata",
+            Extents = []
+        };
+        foreach (var sidecar in sidecars)
+        {
+            var length = new FileInfo(sidecar.Path).Length;
+            var entry = new GenericFileSystemEntry
+            {
+                Volume = this,
+                Path = CombinePath(metadataDirectory.Path, sidecar.Name),
+                Name = sidecar.Name,
+                Kind = sidecar.Kind,
+                IsDirectory = false,
+                Length = length,
+                Offset = 0,
+                Cluster = 0,
+                Attributes = "sidecar",
+                MetadataStatus = sidecar.Status,
+                Extents = []
+            };
+            metadataDirectory.Children.Add(entry);
+            _externalSourcePaths[entry.Path] = sidecar.Path;
+        }
+
+        _root.Insert(0, metadataDirectory);
     }
 
     private static string ReadGameCubeDiscName(ReadOnlySpan<byte> header)

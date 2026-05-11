@@ -786,13 +786,14 @@ public sealed class GenericFileCarver
 
         if (header.Length >= 0x20)
         {
-            var magic = ReadUInt32BigEndian(header[0x18..]);
-            if (magic == 0x5D1C9EA3)
+            var wiiMagic = ReadUInt32BigEndian(header[0x18..]);
+            if (wiiMagic == 0x5D1C9EA3)
             {
                 return new GenericCarverMatch(string.Empty, ".iso", EstimateUnknownSize(remainingLength), "Nintendo Wii optical disc image");
             }
 
-            if (magic == 0xC2339F3D)
+            var gameCubeMagic = ReadUInt32BigEndian(header[0x1C..]);
+            if (gameCubeMagic == 0xC2339F3D)
             {
                 return new GenericCarverMatch(string.Empty, ".gcm", EstimateUnknownSize(remainingLength), "Nintendo GameCube/Dolphin development optical disc image");
             }

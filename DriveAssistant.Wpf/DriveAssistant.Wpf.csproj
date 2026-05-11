@@ -38,6 +38,7 @@
 
   <ItemGroup>
     <PackageReference Include="DiscUtils.Ntfs" Version="0.16.13" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 
 </Project>

@@ -12,6 +12,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Xunit;
+using ZstdSharp;
 
 namespace FATXTools.Wpf.Tests;
 
@@ -717,6 +718,102 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void NintendoStorageImage_GameCubeFstExposesBcaAndDumpInfoSidecars()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var isoPath = Path.Combine(directory.FullName, "101E01.iso");
+            var bcaPath = Path.Combine(directory.FullName, "101E01.bca");
+            var infoPath = Path.Combine(directory.FullName, "101E01-dumpinfo.txt");
+            File.WriteAllBytes(isoPath, CreateGameCubeFstImage());
+            File.WriteAllBytes(bcaPath, Enumerable.Range(0, 64).Select(i => (byte)i).ToArray());
+            File.WriteAllText(infoPath, "Internal Name: Uji Diag Station");
+
+            using var storage = NintendoStorageImage.Open(isoPath);
+            var volume = Assert.IsType<GameCubeDiscVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var metadata = Assert.Single(volume.GetRoot(), entry => entry.Name == "$disc");
+            var bca = Assert.Single(metadata.Children, entry => entry.Name == "bca.bin");
+            var dumpInfo = Assert.Single(metadata.Children, entry => entry.Name == "dumpinfo.txt");
+
+            Assert.Equal("GameCube BCA", bca.Kind);
+            Assert.Equal("Dump Info", dumpInfo.Kind);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(bca, output.Path);
+            Assert.Equal(64, new FileInfo(output.Path).Length);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NintendoStorageImage_RecognizesGameCubeRvzCompressedImage()
+    {
+        var image = CreateGameCubeRvzImage(CreateGameCubeFstImage(), compress: true);
+
+        using var temp = new TempFile(image);
+        var rvzPath = Path.ChangeExtension(temp.Path, ".rvz");
+        File.Copy(temp.Path, rvzPath, overwrite: true);
+        try
+        {
+            using var storage = NintendoStorageImage.Open(rvzPath);
+            var partition = Assert.Single(storage.Partitions);
+            var volume = Assert.IsType<GameCubeDiscVolume>(partition.GenericVolume);
+            var sys = Assert.Single(volume.GetRoot(), entry => entry.Name == "sys");
+            var file = Assert.Single(sys.Children);
+
+            Assert.Equal("Nintendo GameCube FST", volume.FamilyText);
+            Assert.Contains("Native RVZ decompression", partition.Status);
+            Assert.Equal("readme.txt", file.Name);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(file, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("hello"), File.ReadAllBytes(output.Path));
+        }
+        finally
+        {
+            File.Delete(rvzPath);
+        }
+    }
+
+    [Fact]
+    public void NintendoStorageImage_GameCubeRealIsoSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_GAMECUBE_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+        var volume = Assert.IsType<GameCubeDiscVolume>(Assert.Single(storage.Partitions).GenericVolume);
+
+        Assert.Equal("Nintendo GameCube FST", volume.FamilyText);
+        Assert.NotEmpty(volume.GetRoot());
+    }
+
+    [Fact]
+    public void NintendoStorageImage_GameCubeRealRvzSmoke_WhenConfigured()
+    {
+        var imagePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_GAMECUBE_RVZ_IMAGE");
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        using var storage = NintendoStorageImage.Open(imagePath);
+        var partition = Assert.Single(storage.Partitions);
+        var volume = Assert.IsType<GameCubeDiscVolume>(partition.GenericVolume);
+
+        Assert.Equal("Nintendo GameCube FST", volume.FamilyText);
+        Assert.NotEmpty(volume.GetRoot());
+        Assert.Contains("Native RVZ decompression", partition.Status);
+    }
+
+    [Fact]
     public void NintendoStorageImage_ExplicitWiiUAllowsEncryptedRawCandidate()
     {
         var image = new byte[0x8000];
@@ -1301,6 +1398,41 @@ bis_key_02_tweak = 88887777666655554444333322221111
     }
 
     [Fact]
+    public void LegacyConsoleStorageImage_RecoversDeletedPs1MemoryCardSaveBlocks()
+    {
+        var image = new byte[128 * 1024];
+        image[0] = (byte)'M';
+        image[1] = (byte)'C';
+        image[0x80] = 0xA1;
+        image[0x84] = 1;
+        Encoding.ASCII.GetBytes("BASCUS-54321DEL").CopyTo(image.AsSpan(0x8A));
+        Encoding.ASCII.GetBytes("deleted-save").CopyTo(image.AsSpan(0x2000));
+
+        using var temp = new TempFile(image);
+        var memoryCardPath = Path.ChangeExtension(temp.Path, ".mcr");
+        File.Copy(temp.Path, memoryCardPath, overwrite: true);
+        try
+        {
+            using var storage = LegacyConsoleStorageImage.Open(memoryCardPath);
+            var volume = Assert.IsType<RawConsoleVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var deleted = Assert.Single(volume.ScanDeleted(CancellationToken.None, null));
+
+            Assert.True(deleted.IsDeleted);
+            Assert.Equal("_BASCUS-54321DEL", deleted.Name);
+            Assert.Equal(8192, deleted.Length);
+            Assert.Equal("Deleted PS1 memory-card directory entry", deleted.MetadataStatus);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(deleted, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("deleted-save"), File.ReadAllBytes(output.Path).Take(12).ToArray());
+        }
+        finally
+        {
+            File.Delete(memoryCardPath);
+        }
+    }
+
+    [Fact]
     public void LegacyConsoleStorageImage_ParsesDreamcastGdiTracks()
     {
         var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
@@ -1391,6 +1523,43 @@ FILE "gamedata.bin" BINARY
             using var output = TempFile.Empty();
             volume.CopyFile(file, output.Path);
             Assert.Equal(Encoding.ASCII.GetBytes("BOOT=TEST"), File.ReadAllBytes(output.Path));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_ScansPs1Iso9660OrphanFileRecords()
+    {
+        const int sectorSize = 2048;
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        try
+        {
+            var cuePath = Path.Combine(directory.FullName, "devkit.cue");
+            var binPath = Path.Combine(directory.FullName, "devkit.bin");
+            var iso = CreateIso9660Image("PSX_DEV", "SYSTEM.CNF", "BOOT=TEST");
+            WriteIsoDirectoryRecord(iso.AsSpan(22 * sectorSize), 23, 11, "DELETED.BIN;1", isDirectory: false);
+            Encoding.ASCII.GetBytes("orphan-data").CopyTo(iso.AsSpan(23 * sectorSize));
+            File.WriteAllText(cuePath, """
+FILE "devkit.bin" BINARY
+  TRACK 01 MODE2/2352
+    INDEX 01 00:00:00
+""");
+            File.WriteAllBytes(binPath, CreateMode2RawImage(iso));
+
+            using var storage = LegacyConsoleStorageImage.Open(cuePath);
+            var volume = Assert.IsType<CdIso9660Volume>(Assert.Single(storage.Partitions).GenericVolume);
+            var orphan = Assert.Single(volume.ScanDeleted(CancellationToken.None, null), entry => entry.Name.Contains("DELETED.BIN", StringComparison.Ordinal));
+
+            Assert.True(orphan.IsDeleted);
+            Assert.Equal("Unreferenced ISO9660 file record candidate", orphan.MetadataStatus);
+            Assert.Equal(11, orphan.Length);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(orphan, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("orphan-data"), File.ReadAllBytes(output.Path));
         }
         finally
         {
@@ -1971,7 +2140,7 @@ FILE "gamedata.bin" BINARY
     {
         var image = new byte[0x5000];
         Encoding.ASCII.GetBytes("GAFE01").CopyTo(image.AsSpan(0));
-        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x18), 0xC2339F3D);
+        BinaryPrimitives.WriteUInt32BigEndian(image.AsSpan(0x1C), 0xC2339F3D);
         Encoding.ASCII.GetBytes("TEST GAMECUBE DISC").CopyTo(image.AsSpan(0x20));
         const uint fstOffset = 0x1000;
         const uint fstSize = 0x40;
@@ -1990,6 +2159,111 @@ FILE "gamedata.bin" BINARY
         Encoding.ASCII.GetBytes("sys\0readme.txt\0").CopyTo(fst[36..]);
         Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan((int)dataOffset));
         return image;
+    }
+
+    private static byte[] CreateGameCubeRvzImage(byte[] iso, bool compress)
+    {
+        const int header1Size = 0x48;
+        const int header2Size = 0xDC;
+        const int rawDataEntrySize = 0x18;
+        const int rvzGroupEntrySize = 0x0C;
+        const int chunkSize = 0x8000;
+        var compression = compress ? 5u : 0u;
+        var groupPayloads = new List<byte[]>();
+        for (var offset = 0; offset < iso.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, iso.Length - offset);
+            var chunk = iso.AsSpan(offset, length).ToArray();
+            groupPayloads.Add(compress ? CompressZstd(chunk) : chunk);
+        }
+
+        var rawDataEntries = new byte[rawDataEntrySize];
+        BinaryPrimitives.WriteUInt64BigEndian(rawDataEntries.AsSpan(0x00), 0x80);
+        BinaryPrimitives.WriteUInt64BigEndian(rawDataEntries.AsSpan(0x08), (ulong)(iso.Length - 0x80));
+        BinaryPrimitives.WriteUInt32BigEndian(rawDataEntries.AsSpan(0x10), 0);
+        BinaryPrimitives.WriteUInt32BigEndian(rawDataEntries.AsSpan(0x14), (uint)groupPayloads.Count);
+        var encodedRawDataEntries = EncodeRvzTable(rawDataEntries, compression);
+
+        byte[] encodedGroupEntries = [];
+        byte[] groupEntries = [];
+        var payloadOffsets = new ulong[groupPayloads.Count];
+        var lastEncodedGroupEntriesLength = -1;
+        while (lastEncodedGroupEntriesLength != encodedGroupEntries.Length)
+        {
+            lastEncodedGroupEntriesLength = encodedGroupEntries.Length;
+            var payloadOffset = Align4(header1Size + header2Size + encodedRawDataEntries.Length + encodedGroupEntries.Length);
+            for (var index = 0; index < groupPayloads.Count; index++)
+            {
+                payloadOffsets[index] = (ulong)payloadOffset;
+                payloadOffset = Align4(payloadOffset + groupPayloads[index].Length);
+            }
+
+            groupEntries = new byte[groupPayloads.Count * rvzGroupEntrySize];
+            for (var index = 0; index < groupPayloads.Count; index++)
+            {
+                var groupOffset = index * rvzGroupEntrySize;
+                BinaryPrimitives.WriteUInt32BigEndian(groupEntries.AsSpan(groupOffset), (uint)(payloadOffsets[index] / 4));
+                BinaryPrimitives.WriteUInt32BigEndian(groupEntries.AsSpan(groupOffset + 0x04), (compress ? 0x80000000u : 0) | (uint)groupPayloads[index].Length);
+                BinaryPrimitives.WriteUInt32BigEndian(groupEntries.AsSpan(groupOffset + 0x08), 0);
+            }
+
+            encodedGroupEntries = EncodeRvzTable(groupEntries, compression);
+        }
+
+        var dataStart = Align4(header1Size + header2Size + encodedRawDataEntries.Length + encodedGroupEntries.Length);
+        using var output = new MemoryStream();
+        output.SetLength(dataStart);
+        output.Position = dataStart;
+        for (var index = 0; index < groupPayloads.Count; index++)
+        {
+            output.Position = (long)payloadOffsets[index];
+            output.Write(groupPayloads[index]);
+        }
+
+        var rvz = output.ToArray();
+        var header1 = rvz.AsSpan(0, header1Size);
+        Encoding.ASCII.GetBytes("RVZ").CopyTo(header1);
+        header1[3] = 1;
+        BinaryPrimitives.WriteUInt32BigEndian(header1[0x04..], 0x01000000);
+        BinaryPrimitives.WriteUInt32BigEndian(header1[0x08..], 0x01000000);
+        BinaryPrimitives.WriteUInt32BigEndian(header1[0x0C..], header2Size);
+        BinaryPrimitives.WriteUInt64BigEndian(header1[0x24..], (ulong)iso.Length);
+        BinaryPrimitives.WriteUInt64BigEndian(header1[0x2C..], (ulong)rvz.Length);
+
+        var header2 = rvz.AsSpan(header1Size, header2Size);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0x00..], 1);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0x04..], compression);
+        BinaryPrimitives.WriteInt32BigEndian(header2[0x08..], compress ? 5 : 0);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0x0C..], chunkSize);
+        iso.AsSpan(0, 0x80).CopyTo(header2[0x10..]);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0x90..], 0);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0x94..], 0x30);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0xB4..], 1);
+        BinaryPrimitives.WriteUInt64BigEndian(header2[0xB8..], (ulong)(header1Size + header2Size));
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0xC0..], (uint)encodedRawDataEntries.Length);
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0xC4..], (uint)groupPayloads.Count);
+        BinaryPrimitives.WriteUInt64BigEndian(header2[0xC8..], (ulong)(header1Size + header2Size + encodedRawDataEntries.Length));
+        BinaryPrimitives.WriteUInt32BigEndian(header2[0xD0..], (uint)encodedGroupEntries.Length);
+
+        encodedRawDataEntries.CopyTo(rvz.AsSpan(header1Size + header2Size));
+        encodedGroupEntries.CopyTo(rvz.AsSpan(header1Size + header2Size + encodedRawDataEntries.Length));
+        return rvz;
+    }
+
+    private static byte[] EncodeRvzTable(byte[] data, uint compression)
+    {
+        return compression == 5 ? CompressZstd(data) : data;
+    }
+
+    private static byte[] CompressZstd(byte[] data)
+    {
+        using var compressor = new Compressor(5);
+        return compressor.Wrap(data).ToArray();
+    }
+
+    private static int Align4(int value)
+    {
+        return (value + 3) & ~3;
     }
 
     private static byte[] Create3dsNcchImage()
