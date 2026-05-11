@@ -1531,6 +1531,153 @@ FILE "gamedata.bin" BINARY
     }
 
     [Fact]
+    public void LegacyConsoleStorageImage_OpensPspUmdIsoAndCso()
+    {
+        var iso = CreatePspUmdIsoImage();
+        using var isoFile = new TempFile(iso);
+        var isoPath = Path.ChangeExtension(isoFile.Path, ".iso");
+        File.Copy(isoFile.Path, isoPath, overwrite: true);
+        try
+        {
+            using var isoStorage = LegacyConsoleStorageImage.Open(isoPath);
+            var volume = Assert.IsType<CdIso9660Volume>(Assert.Single(isoStorage.Partitions).GenericVolume);
+            Assert.Equal("Sony PSP UMD ISO9660", volume.FamilyText);
+            Assert.Contains(volume.GetRoot(), entry => entry.Name == "PSP_GAME");
+            Assert.Contains(volume.GetRoot(), entry => entry.Name == "UMD_DATA.BIN");
+        }
+        finally
+        {
+            File.Delete(isoPath);
+        }
+
+        using var csoFile = new TempFile(CreateCsoImage(iso));
+        var csoPath = Path.ChangeExtension(csoFile.Path, ".cso");
+        File.Copy(csoFile.Path, csoPath, overwrite: true);
+        try
+        {
+            using var csoStorage = LegacyConsoleStorageImage.Open(csoPath);
+            var volume = Assert.IsType<CdIso9660Volume>(Assert.Single(csoStorage.Partitions).GenericVolume);
+            var pspGame = Assert.Single(volume.GetRoot(), entry => entry.Name == "PSP_GAME");
+
+            Assert.Equal("Sony PSP UMD ISO9660", volume.FamilyText);
+            Assert.Contains("SYSDIR", pspGame.Children.Select(entry => entry.Name));
+        }
+        finally
+        {
+            File.Delete(csoPath);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_PublicPspCsoFixtureSmoke_WhenConfigured()
+    {
+        var fixturePath = Environment.GetEnvironmentVariable("DRIVE_ASSISTANT_PUBLIC_PSP_CSO");
+        if (string.IsNullOrWhiteSpace(fixturePath))
+        {
+            return;
+        }
+
+        using var storage = LegacyConsoleStorageImage.Open(fixturePath);
+        var volume = Assert.IsType<CdIso9660Volume>(Assert.Single(storage.Partitions).GenericVolume);
+
+        Assert.Equal("Sony PSP UMD ISO9660", volume.FamilyText);
+        Assert.NotEmpty(volume.GetRoot());
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_ParsesPspPbpSections()
+    {
+        using var temp = new TempFile(CreatePspPbpImage());
+        var pbpPath = Path.ChangeExtension(temp.Path, ".pbp");
+        File.Copy(temp.Path, pbpPath, overwrite: true);
+        try
+        {
+            using var storage = LegacyConsoleStorageImage.Open(pbpPath);
+            var volume = Assert.IsType<RawConsoleVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var sections = Assert.Single(volume.GetRoot(), entry => entry.Name == "pbp-sections");
+            var param = Assert.Single(sections.Children, entry => entry.Name == "PARAM.SFO");
+            var data = Assert.Single(sections.Children, entry => entry.Name == "DATA.PSP");
+
+            Assert.Equal("Sony PSP EBOOT/PBP", volume.FamilyText);
+            Assert.Equal("PSP Param SFO", param.Kind);
+            Assert.Equal("PSP Executable", data.Kind);
+        }
+        finally
+        {
+            File.Delete(pbpPath);
+        }
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_BrowsesVitaVpkPackage()
+    {
+        using var temp = new TempFile(CreateVitaVpkPackage());
+        var vpkPath = Path.ChangeExtension(temp.Path, ".vpk");
+        File.Copy(temp.Path, vpkPath, overwrite: true);
+        try
+        {
+            using var storage = LegacyConsoleStorageImage.Open(vpkPath);
+            var volume = Assert.IsType<PlayStationPackageVolume>(Assert.Single(storage.Partitions).GenericVolume);
+            var sceSys = Assert.Single(volume.GetRoot(), entry => entry.Name == "sce_sys");
+            var param = Assert.Single(sceSys.Children, entry => entry.Name == "param.sfo");
+
+            Assert.Equal("Sony PS Vita VPK/package", volume.FamilyText);
+            Assert.Equal("PS Vita Param SFO", param.Kind);
+
+            using var output = TempFile.Empty();
+            volume.CopyFile(param, output.Path);
+            Assert.Equal(Encoding.ASCII.GetBytes("VITA-SFO"), File.ReadAllBytes(output.Path));
+        }
+        finally
+        {
+            File.Delete(vpkPath);
+        }
+    }
+
+    [Fact]
+    public void GenericFileSystemImage_OpensFat12VolumeAndScansDeleted()
+    {
+        using var temp = new TempFile(CreateFat12Image(includeDeletedEntry: true));
+        using var image = GenericFileSystemImage.Open(temp.Path);
+        var volume = Assert.IsType<Fat12Volume>(Assert.Single(image.Partitions).GenericVolume);
+        var file = Assert.Single(volume.GetRoot(), entry => entry.Name == "HELLO.TXT");
+        var deleted = Assert.Single(volume.ScanDeleted(CancellationToken.None, null), entry => entry.Name == "_LD.BIN");
+
+        Assert.Equal("FAT12", volume.FamilyText);
+        Assert.Equal(5, file.Length);
+        Assert.Equal("Deleted FAT12 directory entry", deleted.MetadataStatus);
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_RecoversPspPhysicalNandFat12()
+    {
+        using var temp = new TempFile(CreatePspPhysicalNandImage());
+        using var storage = LegacyConsoleStorageImage.Open(temp.Path);
+        var volume = Assert.IsType<Fat12Volume>(Assert.Single(storage.Partitions).GenericVolume);
+        var file = Assert.Single(volume.GetRoot(), entry => entry.Name == "HELLO.TXT");
+
+        Assert.Equal("FAT12", volume.FamilyText);
+        Assert.Contains("physical 512+16 NAND remapped", Assert.Single(storage.Partitions).Status);
+        using var output = TempFile.Empty();
+        volume.CopyFile(file, output.Path);
+        Assert.Equal(Encoding.ASCII.GetBytes("hello"), File.ReadAllBytes(output.Path));
+    }
+
+    [Fact]
+    public void LegacyConsoleStorageImage_MountsPlaintextVitaPartitionTable()
+    {
+        using var temp = new TempFile(CreatePlaintextVitaNandImage());
+        using var storage = LegacyConsoleStorageImage.Open(temp.Path);
+        var volume = Assert.IsType<Fat16Volume>(Assert.Single(storage.Partitions).GenericVolume);
+        var file = Assert.Single(volume.GetRoot(), entry => entry.Name == "HELLO.TXT");
+
+        Assert.Equal("FAT16", volume.FamilyText);
+        Assert.Equal("os0", volume.Name);
+        Assert.Contains("PS Vita plaintext FAT16", Assert.Single(storage.Partitions).Status);
+        Assert.Equal(5, file.Length);
+    }
+
+    [Fact]
     public void LegacyConsoleStorageImage_ScansPs1Iso9660OrphanFileRecords()
     {
         const int sectorSize = 2048;
@@ -1959,6 +2106,114 @@ FILE "devkit.bin" BINARY
         }
 
         return image;
+    }
+
+    private static byte[] CreateFat12Image(bool includeDeletedEntry = false)
+    {
+        var image = new byte[16 * 512];
+        var boot = image.AsSpan(0, 512);
+        Encoding.ASCII.GetBytes("MSDOS5.0").CopyTo(boot[3..]);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[11..], 512);
+        boot[13] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[14..], 1);
+        boot[16] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[17..], 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[19..], 16);
+        boot[21] = 0xF8;
+        BinaryPrimitives.WriteUInt16LittleEndian(boot[22..], 1);
+        Encoding.ASCII.GetBytes("FAT12   ").CopyTo(boot[54..]);
+        boot[510] = 0x55;
+        boot[511] = 0xAA;
+
+        var fat = image.AsSpan(512, 512);
+        fat[0] = 0xF8;
+        fat[1] = 0xFF;
+        fat[2] = 0xFF;
+        WriteFat12Entry(fat, 2, 0xFFF);
+        WriteFat12Entry(fat, 3, 0xFFF);
+
+        var root = image.AsSpan(1024, 512);
+        var entry = root[..32];
+        Encoding.ASCII.GetBytes("HELLO   TXT").CopyTo(entry);
+        entry[11] = 0x20;
+        BinaryPrimitives.WriteUInt16LittleEndian(entry[26..], 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[28..], 5);
+        Encoding.ASCII.GetBytes("hello").CopyTo(image.AsSpan(1536, 5));
+
+        if (includeDeletedEntry)
+        {
+            var deleted = root.Slice(32, 32);
+            Encoding.ASCII.GetBytes("OLD     BIN").CopyTo(deleted);
+            deleted[0] = 0xE5;
+            deleted[11] = 0x20;
+            BinaryPrimitives.WriteUInt16LittleEndian(deleted[26..], 3);
+            BinaryPrimitives.WriteUInt32LittleEndian(deleted[28..], 4);
+            Encoding.ASCII.GetBytes("old!").CopyTo(image.AsSpan(2048, 4));
+        }
+
+        return image;
+    }
+
+    private static byte[] CreatePspPhysicalNandImage()
+    {
+        const int logicalBlockSize = 0x4000;
+        const int physicalPageSize = 528;
+        const int physicalBlockSize = physicalPageSize * 32;
+        var logical = new byte[logicalBlockSize * 4];
+        CreateFat12Image(includeDeletedEntry: true).CopyTo(logical.AsSpan(0xC000));
+        var physical = new byte[physicalBlockSize * 4];
+        Array.Fill<byte>(physical, 0xFF);
+        for (var logicalBlock = 0; logicalBlock < 4; logicalBlock++)
+        {
+            var physicalBase = logicalBlock * physicalBlockSize;
+            var logicalBase = logicalBlock * logicalBlockSize;
+            for (var page = 0; page < 32; page++)
+            {
+                logical.AsSpan(logicalBase + page * 512, 512).CopyTo(physical.AsSpan(physicalBase + page * physicalPageSize, 512));
+            }
+
+            var spare = physical.AsSpan(physicalBase + 512, 16);
+            spare[4] = 0x00;
+            spare[5] = 0xFF;
+            BinaryPrimitives.WriteUInt16LittleEndian(spare[6..], (ushort)logicalBlock);
+        }
+
+        return physical;
+    }
+
+    private static byte[] CreatePlaintextVitaNandImage()
+    {
+        var fat16 = CreateFat16Image();
+        var image = new byte[1024 + fat16.Length];
+        var header = image.AsSpan(0, 512);
+        Encoding.ASCII.GetBytes("Sony Computer Entertainment Inc.").CopyTo(header);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[0x20..], 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[0x24..], (uint)(image.Length / 512));
+        var entry = header.Slice(0x50, 0x11);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry, 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[4..], (uint)(fat16.Length / 512));
+        entry[8] = 0x03;
+        entry[9] = 0x06;
+        entry[10] = 0x01;
+        header[510] = 0x55;
+        header[511] = 0xAA;
+        fat16.CopyTo(image.AsSpan(1024));
+        return image;
+    }
+
+    private static void WriteFat12Entry(Span<byte> fat, int cluster, ushort value)
+    {
+        var offset = cluster + cluster / 2;
+        if ((cluster & 1) == 0)
+        {
+            fat[offset] = (byte)(value & 0xFF);
+            fat[offset + 1] = (byte)((fat[offset + 1] & 0xF0) | ((value >> 8) & 0x0F));
+        }
+        else
+        {
+            fat[offset] = (byte)((fat[offset] & 0x0F) | ((value << 4) & 0xF0));
+            fat[offset + 1] = (byte)(value >> 4);
+        }
     }
 
     private static byte[] CreateExFatImageWithMultiClusterDirectory()
@@ -2545,6 +2800,147 @@ FILE "devkit.bin" BINARY
         WriteIsoDirectoryRecord(root[offset..], fileSector, fileText.Length, fileName + ";1", isDirectory: false);
         Encoding.ASCII.GetBytes(fileText).CopyTo(image.AsSpan(fileSector * sectorSize));
         return image;
+    }
+
+    private static byte[] CreatePspUmdIsoImage()
+    {
+        const int sectorSize = 2048;
+        const int pvdSector = 16;
+        const int rootSector = 20;
+        const int pspGameSector = 21;
+        const int sysDirSector = 22;
+        const int umdDataSector = 23;
+        const int ebootSector = 24;
+        var image = new byte[28 * sectorSize];
+        var pvd = image.AsSpan(pvdSector * sectorSize, sectorSize);
+        pvd[0] = 1;
+        Encoding.ASCII.GetBytes("CD001").CopyTo(pvd[1..]);
+        pvd[6] = 1;
+        Encoding.ASCII.GetBytes("PSP_UMD".PadRight(32)).CopyTo(pvd[40..]);
+        WriteIsoDirectoryRecord(pvd[156..], rootSector, sectorSize, "\0", isDirectory: true);
+
+        var root = image.AsSpan(rootSector * sectorSize, sectorSize);
+        var offset = 0;
+        offset += WriteIsoDirectoryRecord(root[offset..], rootSector, sectorSize, "\0", isDirectory: true);
+        offset += WriteIsoDirectoryRecord(root[offset..], rootSector, sectorSize, "\u0001", isDirectory: true);
+        offset += WriteIsoDirectoryRecord(root[offset..], pspGameSector, sectorSize, "PSP_GAME", isDirectory: true);
+        WriteIsoDirectoryRecord(root[offset..], umdDataSector, 8, "UMD_DATA.BIN;1", isDirectory: false);
+
+        var pspGame = image.AsSpan(pspGameSector * sectorSize, sectorSize);
+        offset = 0;
+        offset += WriteIsoDirectoryRecord(pspGame[offset..], pspGameSector, sectorSize, "\0", isDirectory: true);
+        offset += WriteIsoDirectoryRecord(pspGame[offset..], rootSector, sectorSize, "\u0001", isDirectory: true);
+        WriteIsoDirectoryRecord(pspGame[offset..], sysDirSector, sectorSize, "SYSDIR", isDirectory: true);
+
+        var sysDir = image.AsSpan(sysDirSector * sectorSize, sectorSize);
+        offset = 0;
+        offset += WriteIsoDirectoryRecord(sysDir[offset..], sysDirSector, sectorSize, "\0", isDirectory: true);
+        offset += WriteIsoDirectoryRecord(sysDir[offset..], pspGameSector, sectorSize, "\u0001", isDirectory: true);
+        WriteIsoDirectoryRecord(sysDir[offset..], ebootSector, 8, "EBOOT.BIN;1", isDirectory: false);
+
+        Encoding.ASCII.GetBytes("UMD-DATA").CopyTo(image.AsSpan(umdDataSector * sectorSize));
+        Encoding.ASCII.GetBytes("PSPBOOT!").CopyTo(image.AsSpan(ebootSector * sectorSize));
+        return image;
+    }
+
+    private static byte[] CreateCsoImage(byte[] iso)
+    {
+        const int headerSize = 24;
+        const int blockSize = 2048;
+        var blockCount = (iso.Length + blockSize - 1) / blockSize;
+        var blocks = new List<byte[]>(blockCount);
+        for (var block = 0; block < blockCount; block++)
+        {
+            var length = Math.Min(blockSize, iso.Length - block * blockSize);
+            blocks.Add(CompressZlib(iso.AsSpan(block * blockSize, length).ToArray()));
+        }
+
+        var indexSize = (blockCount + 1) * 4;
+        var output = new MemoryStream();
+        output.SetLength(headerSize + indexSize);
+        output.Position = headerSize + indexSize;
+        var offsets = new uint[blockCount + 1];
+        for (var block = 0; block < blockCount; block++)
+        {
+            offsets[block] = (uint)output.Position;
+            output.Write(blocks[block]);
+        }
+
+        offsets[blockCount] = (uint)output.Position;
+        var cso = output.ToArray();
+        var header = cso.AsSpan(0, headerSize);
+        Encoding.ASCII.GetBytes("CISO").CopyTo(header);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[0x04..], headerSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[0x08..], (ulong)iso.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[0x10..], blockSize);
+        header[0x14] = 1;
+        header[0x15] = 0;
+        for (var i = 0; i < offsets.Length; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(cso.AsSpan(headerSize + i * 4), offsets[i]);
+        }
+
+        return cso;
+    }
+
+    private static byte[] CompressZlib(byte[] data)
+    {
+        using var output = new MemoryStream();
+        using (var zlib = new ZLibStream(output, CompressionLevel.SmallestSize, leaveOpen: true))
+        {
+            zlib.Write(data);
+        }
+
+        return output.ToArray();
+    }
+
+    private static byte[] CreatePspPbpImage()
+    {
+        var sections = new[]
+        {
+            Encoding.ASCII.GetBytes("SFO"),
+            Array.Empty<byte>(),
+            Array.Empty<byte>(),
+            Array.Empty<byte>(),
+            Array.Empty<byte>(),
+            Array.Empty<byte>(),
+            Encoding.ASCII.GetBytes("PSP"),
+            Array.Empty<byte>()
+        };
+        var offset = 0x28;
+        var image = new byte[offset + sections.Sum(section => section.Length)];
+        image[0] = 0;
+        image[1] = (byte)'P';
+        image[2] = (byte)'B';
+        image[3] = (byte)'P';
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(4), 0x00010000);
+        for (var i = 0; i < sections.Length; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(8 + i * 4), (uint)offset);
+            sections[i].CopyTo(image.AsSpan(offset));
+            offset += sections[i].Length;
+        }
+
+        return image;
+    }
+
+    private static byte[] CreateVitaVpkPackage()
+    {
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var sfo = archive.CreateEntry("sce_sys/param.sfo");
+            using (var entryStream = sfo.Open())
+            {
+                entryStream.Write(Encoding.ASCII.GetBytes("VITA-SFO"));
+            }
+
+            var eboot = archive.CreateEntry("eboot.bin");
+            using var ebootStream = eboot.Open();
+            ebootStream.Write(Encoding.ASCII.GetBytes("BOOT"));
+        }
+
+        return stream.ToArray();
     }
 
     private static byte[] CreateMode2RawImage(byte[] iso)

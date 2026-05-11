@@ -68,7 +68,7 @@ public partial class ConsoleImageOpenWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Console Images (*.img;*.bin;*.cue;*.raw;*.imgc;*.iso;*.rvz;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.cim;*.vmu;*.vms;*.dci;*.hex;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.rom;*.sra;*.eep;*.fla;*.mpk;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app)|*.img;*.bin;*.cue;*.raw;*.imgc;*.iso;*.rvz;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.cim;*.vmu;*.vms;*.dci;*.hex;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.rom;*.sra;*.eep;*.fla;*.mpk;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
+            Filter = "Console Images (*.img;*.bin;*.cue;*.raw;*.imgc;*.iso;*.cso;*.pbp;*.vpk;*.rvz;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.cim;*.vmu;*.vms;*.dci;*.hex;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.rom;*.sra;*.eep;*.fla;*.mpk;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app)|*.img;*.bin;*.cue;*.raw;*.imgc;*.iso;*.cso;*.pbp;*.vpk;*.rvz;*.wbfs;*.zip;*.wud;*.wux;*.gcm;*.gdi;*.cdi;*.cim;*.vmu;*.vms;*.dci;*.hex;*.mcr;*.mcd;*.psx;*.ps2;*.z64;*.n64;*.v64;*.rom;*.sra;*.eep;*.fla;*.mpk;*.gb;*.gbc;*.gba;*.sav;*.nds;*.dsi;*.3ds;*.cci;*.cxi;*.cfa;*.csu;*.app|Switch NAND (*.bin)|*.bin|All files (*.*)|*.*",
             CheckFileExists = true
         };
 
@@ -206,7 +206,7 @@ public partial class ConsoleImageOpenWindow : Window
             ConsoleDriveImageKind.NintendoSwitchNand => "Switch NAND support reads the GPT and mounts readable FAT32 BIS partitions when BIS keys are supplied.",
             ConsoleDriveImageKind.NintendoWiiWiiU => "Nintendo support detects Wii RVT-H/NAND/disc/WBFS, GameCube FST discs, GameCube RVZ headers, Wii U WFS/dev storage, Nintendo DS NitroFS ROMs, DSi NAND layouts, and 3DS NCSD/NCCH containers for read-only inspection and carving.",
             ConsoleDriveImageKind.PlayStation2Hdd => "PlayStation 2 support detects APA/PFS and HDLoader partitions for read-only inspection and carving.",
-            ConsoleDriveImageKind.LegacyDevkitMedia => "Legacy support recognizes PS1 save blocks and CD data tracks, PS2 memory-card images, Dreamcast Katana GDI/CIM/flash/VMU media, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and Saturn system areas for read-only export and carving.",
+            ConsoleDriveImageKind.LegacyDevkitMedia => "Legacy support recognizes PS1 save blocks and CD data tracks, PS2 memory-card images, PSP UMD ISO/CSO/PBP media, PS Vita VPK packages, Dreamcast Katana GDI/CIM/flash/VMU media, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and Saturn system areas for read-only export and carving.",
             _ => "This image type does not require a key file."
         };
     }

@@ -70,6 +70,12 @@ public sealed class GenericFileSystemImage : IDisposable
                             partitions.Add(new PartitionModel(volume, $"Mounted, FAT16, {volume.GetRoot().Count:N0} root entries"));
                             break;
                         }
+                        case GenericFileSystemKind.Fat12:
+                        {
+                            var volume = Fat12Volume.Open(sourcePath, candidate);
+                            partitions.Add(new PartitionModel(volume, $"Mounted, FAT12, {volume.GetRoot().Count:N0} root entries"));
+                            break;
+                        }
                         case GenericFileSystemKind.ExFat:
                         {
                             var volume = ExFatVolume.Open(sourcePath, candidate);
@@ -86,7 +92,7 @@ public sealed class GenericFileSystemImage : IDisposable
 
             if (partitions.Count == 0)
             {
-                throw new InvalidDataException("No mountable NTFS, FAT32, or exFAT volumes were found.");
+                throw new InvalidDataException("No mountable NTFS, FAT12, FAT16, FAT32, or exFAT volumes were found.");
             }
 
             return new GenericFileSystemImage(sourcePath, stream, partitions);
@@ -259,7 +265,12 @@ public sealed class GenericFileSystemImage : IDisposable
         }
 
         fatType = Encoding.ASCII.GetString(sector.Slice(54, 8));
-        return fatType == "FAT16   " ? GenericFileSystemKind.Fat16 : GenericFileSystemKind.Unknown;
+        return fatType switch
+        {
+            "FAT12   " => GenericFileSystemKind.Fat12,
+            "FAT16   " => GenericFileSystemKind.Fat16,
+            _ => GenericFileSystemKind.Unknown
+        };
     }
 
     internal static bool ReadExactly(Stream stream, long offset, Span<byte> buffer)
@@ -1374,6 +1385,7 @@ public enum GenericFileSystemKind
 {
     Unknown,
     Ntfs,
+    Fat12,
     Fat16,
     Fat32,
     ExFat

@@ -12,6 +12,7 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
     private const int Ps1MemoryCardSize = 128 * 1024;
     private const int Ps1BlockSize = 8 * 1024;
     private const int Ps1DirectoryFrameSize = 128;
+    private const int PbpHeaderSize = 0x28;
     private static readonly byte[] NintendoLogo =
     [
         0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83,
@@ -20,40 +21,56 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
     ];
 
-    private LegacyConsoleStorageImage(string sourcePath, IReadOnlyList<PartitionModel> partitions)
+    private readonly IReadOnlyList<string> _temporarySourcePaths;
+
+    private LegacyConsoleStorageImage(string sourcePath, string activeSourcePath, IReadOnlyList<string> temporarySourcePaths, IReadOnlyList<PartitionModel> partitions)
     {
         SourcePath = sourcePath;
+        ActiveSourcePath = activeSourcePath;
+        _temporarySourcePaths = temporarySourcePaths;
         Partitions = partitions;
     }
 
     public string SourcePath { get; }
 
+    public string ActiveSourcePath { get; }
+
     public IReadOnlyList<PartitionModel> Partitions { get; }
 
     public static LegacyConsoleStorageImage Open(string sourcePath)
     {
-        var info = new FileInfo(sourcePath);
+        var activePath = sourcePath;
+        var temporaryPaths = new List<string>();
+        if (CsoPspImage.TryDecompressToTemporaryIso(sourcePath, out var csoIsoPath, out _))
+        {
+            activePath = csoIsoPath;
+            temporaryPaths.Add(csoIsoPath);
+        }
+
+        var info = new FileInfo(activePath);
         if (!info.Exists)
         {
-            throw new FileNotFoundException("Legacy console image was not found.", sourcePath);
+            throw new FileNotFoundException("Legacy console image was not found.", activePath);
         }
 
         var header = new byte[Math.Min(0x4000, Math.Max(0, (int)Math.Min(info.Length, 0x4000)))];
-        using (var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess))
+        using (var stream = new FileStream(activePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.RandomAccess))
         {
             stream.Read(header, 0, header.Length);
         }
 
-        if (!TryCreatePartitions(sourcePath, info.Length, header, out var partitions))
+        if (!TryCreatePartitions(activePath, info.Length, header, temporaryPaths, out var partitions))
         {
+            TryDeleteTemporary(temporaryPaths);
             throw new InvalidDataException("No supported legacy console/devkit media signature was found.");
         }
 
-        return new LegacyConsoleStorageImage(sourcePath, partitions);
+        return new LegacyConsoleStorageImage(sourcePath, activePath, temporaryPaths, partitions);
     }
 
     public void Dispose()
     {
+        TryDeleteTemporary(_temporarySourcePaths);
     }
 
     private static PartitionModel CreatePartition(string sourcePath, long length, string family, string status, Action<RawConsoleVolume>? configure = null)
@@ -69,10 +86,15 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         return new PartitionModel(volume, status);
     }
 
-    private static bool TryCreatePartitions(string path, long length, ReadOnlySpan<byte> header, out IReadOnlyList<PartitionModel> partitions)
+    private static bool TryCreatePartitions(string path, long length, ReadOnlySpan<byte> header, List<string> temporaryPaths, out IReadOnlyList<PartitionModel> partitions)
     {
         var rows = new List<PartitionModel>();
         var extension = Path.GetExtension(path).ToLowerInvariant();
+        if ((extension is ".vpk" or ".zip") && PlayStationPackageVolume.TryOpen(path, length, out var packageVolume, out var packageStatus))
+        {
+            rows.Add(new PartitionModel(packageVolume, packageStatus));
+        }
+
         if (extension is ".cue" or ".iso" or ".bin" or ".gdi"
             && CdIso9660Volume.TryOpen(path, out var cdVolume, out var cdStatus))
         {
@@ -82,6 +104,11 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         if (SgiIrixStorageImage.TryOpen(path, length, header, out var sgiPartitions))
         {
             rows.AddRange(sgiPartitions);
+        }
+
+        if (PlayStationPortableStorageImage.TryOpen(path, length, header, temporaryPaths, out var portablePartitions))
+        {
+            rows.AddRange(portablePartitions);
         }
 
         if (TryCreatePartition(path, length, header, out var partition))
@@ -113,6 +140,13 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         {
             var status = "PS2 TOOL/TEST-compatible memory-card image detected; raw export and carving are available. Save-block parsing is planned.";
             partition = CreatePartition(path, length, "Sony PlayStation 2 memory card", status);
+            return true;
+        }
+
+        if (LooksLikePbp(header) || extension == ".pbp")
+        {
+            var status = "PSP EBOOT/PBP container detected; section browsing/export, raw export, and carving are available.";
+            partition = CreatePartition(path, length, "Sony PSP EBOOT/PBP", status, volume => AddPbpEntries(volume, path, length));
             return true;
         }
 
@@ -306,6 +340,70 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
         ]);
     }
 
+    private static void AddPbpEntries(RawConsoleVolume volume, string sourcePath, long length)
+    {
+        volume.AddRootEntries([CreateFileEntry(volume, "/" + Path.GetFileName(sourcePath), Path.GetFileName(sourcePath), "Raw PBP", 0, length, "raw", "Whole PSP EBOOT/PBP raw export entry")]);
+        if (length < PbpHeaderSize)
+        {
+            return;
+        }
+
+        Span<byte> header = stackalloc byte[PbpHeaderSize];
+        using (var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.RandomAccess))
+        {
+            if (stream.Read(header) != header.Length || !LooksLikePbp(header))
+            {
+                return;
+            }
+        }
+
+        var offsets = new uint[8];
+        for (var i = 0; i < offsets.Length; i++)
+        {
+            offsets[i] = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(8 + i * 4, 4));
+        }
+
+        var sectionDirectory = CreateDirectoryEntry(volume, "/pbp-sections", "pbp-sections", "PBP Sections", "PSP PBP section table");
+        volume.AddRootEntries([sectionDirectory]);
+        var names = new[]
+        {
+            ("PARAM.SFO", "PSP Param SFO"),
+            ("ICON0.PNG", "PSP Icon"),
+            ("ICON1.PMF", "PSP Icon Movie"),
+            ("PIC0.PNG", "PSP Background"),
+            ("PIC1.PNG", "PSP Background"),
+            ("SND0.AT3", "PSP Audio"),
+            ("DATA.PSP", "PSP Executable"),
+            ("DATA.PSAR", "PSP Data Archive")
+        };
+        for (var i = 0; i < offsets.Length; i++)
+        {
+            var start = offsets[i];
+            var end = i + 1 < offsets.Length ? offsets[i + 1] : (uint)Math.Min(uint.MaxValue, length);
+            if (start < PbpHeaderSize || end < start || start >= length)
+            {
+                continue;
+            }
+
+            var sectionLength = Math.Min(end - start, (uint)Math.Max(0, length - start));
+            if (sectionLength == 0)
+            {
+                continue;
+            }
+
+            var (name, kind) = names[i];
+            sectionDirectory.Children.Add(CreateFileEntry(
+                volume,
+                CombinePath(sectionDirectory.Path, name),
+                name,
+                kind,
+                start,
+                sectionLength,
+                $"PBP section {i}",
+                "PSP PBP section entry"));
+        }
+    }
+
     private static void AddHeaderAndRawEntries(RawConsoleVolume volume, string sourcePath, long length, string headerName, long headerLength, string headerKind, string headerStatus)
     {
         volume.AddRootEntries(
@@ -419,6 +517,11 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
     private static bool LooksLikePs2MemoryCard(ReadOnlySpan<byte> header)
     {
         return header.Length >= 27 && Encoding.ASCII.GetString(header[..27]) == "Sony PS2 Memory Card Format";
+    }
+
+    private static bool LooksLikePbp(ReadOnlySpan<byte> header)
+    {
+        return header.Length >= PbpHeaderSize && header[0] == 0 && header[1] == (byte)'P' && header[2] == (byte)'B' && header[3] == (byte)'P';
     }
 
     private static bool LooksLikeDreamcastIpBin(ReadOnlySpan<byte> header)
@@ -646,6 +749,29 @@ internal sealed class LegacyConsoleStorageImage : IDisposable
     private static string CombinePath(string parent, string name)
     {
         return parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name;
+    }
+
+    private static void TryDeleteTemporary(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            TryDeleteTemporary(path);
+        }
+    }
+
+    private static void TryDeleteTemporary(string? path)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only.
+        }
     }
 
     private readonly record struct GdiTrack(int Number, int Lba, int TrackType, int SectorSize, string FileName, int Offset);

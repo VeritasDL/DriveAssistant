@@ -23,7 +23,7 @@ The project has a general recovery-tool foundation with a strong focus on consol
 | Original Xbox | FATX partition browsing, metadata recovery, export, file carving. |
 | Xbox 360 | FATX partition browsing, metadata recovery, export, XEX carving, file carving. |
 | Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, embedded XVD/XVC manifest extraction, and nested readable filesystem probing where possible. |
-| Legacy devkit / ROM / save media | PS1 memory-card active and deleted save-block browsing/export, PS1/Dreamcast ISO9660 data-track browsing plus unreferenced directory-record scanning for plain ISO and BIN/CUE MODE1/MODE2 images, PS2 memory-card raw media, Dreamcast Katana GDI descriptor track browsing with sidecar export, Dreamcast GDI ISO9660 track browsing, Dreamcast CDI/CIM/VMU/flash raw media, Nintendo 64 ROM/save metadata, Game Boy-family ROM/save metadata, Sega Saturn system-area detection, and whole-image raw export/carving. |
+| Legacy devkit / ROM / save media | PS1 memory-card active and deleted save-block browsing/export, PS1/Dreamcast/PSP ISO9660 data-track browsing plus unreferenced directory-record scanning for plain ISO and BIN/CUE MODE1/MODE2 images, PSP UMD ISO/CSO browsing/export, PSP EBOOT/PBP section export, PS Vita VPK/ZIP package browsing/export, PS2 memory-card raw media, Dreamcast Katana GDI descriptor track browsing with sidecar export, Dreamcast GDI ISO9660 track browsing, Dreamcast CDI/CIM/VMU/flash raw media, Nintendo 64 ROM/save metadata, Game Boy-family ROM/save metadata, Sega Saturn system-area detection, and whole-image raw export/carving. |
 | PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
 | PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
 | PlayStation 2 | APA partition table detection for PS2 HDD images, managed PFS directory browsing/export, deleted/slack PFS metadata scanning, orphan PFS inode recovery candidates, HDLoader partition classification, raw partition export, and partition-scoped carving. |
@@ -66,7 +66,7 @@ Format-specific carving includes:
 - Xbox 360 XEX variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
 - PS4 packages: `CNT` package headers as `PKG`, including observed type-`1` debug packages as `DPKG`.
 - PS2 storage: APA HDD partition headers and partition-scoped carving from mounted PFS volumes.
-- Legacy/devkit media: PS1 memory cards, PS1/Dreamcast ISO9660 data tracks, PS2 memory cards, Dreamcast Katana `IP.BIN`, GDI descriptors, CIM containers, flash dumps, Nintendo 64 ROM/save images, Game Boy-family ROM headers, and Sega Saturn system areas.
+- Legacy/devkit media: PS1 memory cards, PS1/Dreamcast/PSP ISO9660 data tracks, PSP CSO compressed UMD images, PSP PBP containers, PS Vita VPK packages, PS2 memory cards, Dreamcast Katana `IP.BIN`, GDI descriptors, CIM containers, flash dumps, Nintendo 64 ROM/save images, Game Boy-family ROM headers, and Sega Saturn system areas.
 - Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, RVT-H disc banks, Wii U WFS markers, Wii U FST markers, and WUX compressed disc images.
 - Nintendo DS / DSi / 3DS: Nintendo DS NitroFS ROMs, 3DS NCSD/CCI/NAND images, and 3DS NCCH/CXI/CFA containers with header-declared section rows.
 - Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0` with nested entry expansion, `CNMT`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
@@ -92,6 +92,8 @@ Some preserved Wii U devkit HDD dumps are ZIP64 local-header archives without a 
 Plain Nintendo DS ROMs are NitroFS containers and do not need keys for browsing/export. DSi NAND dumps with a No$GBA footer are decrypted locally into temporary FAT partitions for browsing/export. 3DS NAND browsing accepts a local folder containing matching `boot9.bin`, OTP (`otp.bin`, `otp.mem`, or `otp_dec.mem`), and NAND CID (`nand_cid.mem` or `nand_cid.bin`).
 
 Plaintext or already-decrypted 3DS/DSi FAT images mount directly and support active browsing, export, deleted FAT entry scanning, and file carving. Example placeholder formats are in [`docs/example-key-files`](docs/example-key-files); keep real `boot9.bin`, OTP, CID, movable.sed, and NAND-derived keys local to the console that produced the dump.
+
+PSP UMD `.iso` images mount through ISO9660, and PSP `.cso` compressed UMD images are decompressed into a temporary ISO for the same browser/export path. PSP Memory Stick dumps that are plain FAT12/FAT16/FAT32 mount through the generic filesystem path. PSP NAND images support mapped FAT12 flash partitions, plus physical 512+16 page dumps when spare-area logical block metadata is present. PS Vita `.vpk`/ZIP packages can be browsed and exported when they expose `sce_sys/param.sfo`; plaintext/decrypted Vita NAND/eMMC partition maps mount FAT16 and exFAT partitions. Encrypted Vita PFS, CMA backup, and externally dumped encrypted NAND/eMMC content still require matching keys or external decryption before filesystem browsing.
 
 ## Wii Keys
 

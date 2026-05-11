@@ -173,12 +173,15 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
         var logicalSectorBase = TryFindDirectoryPhysicalSector(stream, candidate, rootLba, out var rootPhysicalSector)
             ? checked((int)rootLba - rootPhysicalSector)
             : physicalPvdSector - 16;
+        var familyText = LooksLikePspUmdRoot(stream, candidate, checked((int)rootLba - logicalSectorBase), rootLength)
+            ? "Sony PSP UMD ISO9660"
+            : candidate.FamilyText;
         var sourceLength = new FileInfo(candidate.DataPath).Length;
         var partition = new GenericPartitionCandidate(0, Guid.Empty, 0, sourceLength, volumeId, LogicalSectorSize);
-        volume = new CdIso9660Volume(sourcePath, candidate.DataPath, partition, candidate.FamilyText, candidate.SectorSize, candidate.DataOffset, logicalSectorBase);
+        volume = new CdIso9660Volume(sourcePath, candidate.DataPath, partition, familyText, candidate.SectorSize, candidate.DataOffset, logicalSectorBase);
         volume.LoadDirectory(stream, (int)rootLba, rootLength, "/", volume._root, new HashSet<int>());
         var trackText = candidate.TrackNumber > 0 ? $" track {candidate.TrackNumber}" : string.Empty;
-        status = $"Mounted {candidate.FamilyText}{trackText} ISO9660 volume '{volumeId}', {volume._root.Count:N0} root entries. Data-track file export is available.";
+        status = $"Mounted {familyText}{trackText} ISO9660 volume '{volumeId}', {volume._root.Count:N0} root entries. Data-track file export is available.";
         return volume._root.Count > 0 || rootLength > 0;
     }
 
@@ -228,6 +231,63 @@ internal sealed class CdIso9660Volume : GenericFileSystemVolume
         }
 
         return false;
+    }
+
+    private static bool LooksLikePspUmdRoot(FileStream stream, CdTrackCandidate candidate, int rootLba, long rootLength)
+    {
+        if (rootLength <= 0 || rootLength > 1024 * 1024)
+        {
+            return false;
+        }
+
+        var directory = new byte[rootLength];
+        var sector = new byte[LogicalSectorSize];
+        var written = 0;
+        var logicalSector = rootLba;
+        while (written < directory.Length)
+        {
+            if (!ReadSector(stream, candidate, logicalSector, sector))
+            {
+                return false;
+            }
+
+            var copy = Math.Min(sector.Length, directory.Length - written);
+            Buffer.BlockCopy(sector, 0, directory, written, copy);
+            written += copy;
+            logicalSector++;
+        }
+
+        var hasPspGame = false;
+        var hasUmdData = false;
+        var offset = 0;
+        while (offset < directory.Length)
+        {
+            var recordLength = directory[offset];
+            if (recordLength == 0)
+            {
+                offset = ((offset / LogicalSectorSize) + 1) * LogicalSectorSize;
+                continue;
+            }
+
+            if (offset + recordLength > directory.Length || recordLength < 34)
+            {
+                break;
+            }
+
+            var record = directory.AsSpan(offset, recordLength);
+            offset += recordLength;
+            var nameLength = record[32];
+            if (33 + nameLength > record.Length)
+            {
+                continue;
+            }
+
+            var name = DecodeFileIdentifier(record.Slice(33, nameLength));
+            hasPspGame |= name.Equals("PSP_GAME", StringComparison.OrdinalIgnoreCase);
+            hasUmdData |= name.Equals("UMD_DATA.BIN", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return hasPspGame && hasUmdData;
     }
 
     private void LoadDirectory(FileStream stream, int logicalSector, long length, string path, List<GenericFileSystemEntry> rows, HashSet<int> visited)
