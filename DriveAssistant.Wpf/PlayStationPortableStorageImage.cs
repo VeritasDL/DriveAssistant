@@ -103,7 +103,7 @@ internal static class PlayStationPortableStorageImage
 
     private static bool TryCreateFat12Candidate(Stream stream, long offset, uint index, string name, out GenericPartitionCandidate candidate)
     {
-        candidate = default;
+        candidate = new GenericPartitionCandidate(index, Guid.Empty, offset, 0, name);
         Span<byte> boot = stackalloc byte[SectorSize];
         if (!GenericFileSystemImage.ReadExactly(stream, offset, boot) || boot[510] != 0x55 || boot[511] != 0xAA)
         {
