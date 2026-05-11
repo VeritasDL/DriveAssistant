@@ -51,7 +51,7 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Restore
-        run: dotnet restore DriveAssistant.Cli/DriveAssistant.Cli.csproj
+        run: dotnet restore DriveAssistant.sln
 
       - name: Test
         run: dotnet test DriveAssistant.sln -c Release --no-restore
@@ -185,7 +185,7 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Restore
-        run: dotnet restore DriveAssistant.sln
+        run: dotnet restore DriveAssistant.Cli/DriveAssistant.Cli.csproj
 
       - name: Publish self-contained Linux CLI
         shell: bash
