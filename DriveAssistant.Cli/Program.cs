@@ -176,7 +176,7 @@ internal static class Program
 
     private static DriveAssistantImage? TryOpenXboxGptImage(CliOptions options)
     {
-        var image = XboxStorageImage.Open(options.ImagePath);
+        var image = XboxStorageImage.Open(options.ActiveImagePath);
         var partitions = image.Volumes.Select(volume => (CliPartition)new NtfsCliPartition(volume, $"Mounted, NTFS, {volume.GetRoot().Count:N0} root entries"))
             .Concat(image.BootFileSystems.Select(volume => (CliPartition)new GenericCliPartition(volume, $"Mounted, XBFS, {volume.GetRoot().Count:N0} root entries")))
             .ToList();
@@ -185,35 +185,35 @@ internal static class Program
 
     private static DriveAssistantImage? TryOpenSwitchImage(CliOptions options)
     {
-        var image = SwitchStorageImage.Open(options.ImagePath, options.KeyPath);
+        var image = SwitchStorageImage.Open(options.ActiveImagePath, options.KeyPath);
         var partitions = image.Partitions.Select(ToCliPartition).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "Nintendo Switch", partitions, image);
     }
 
     private static DriveAssistantImage? TryOpenNintendoImage(CliOptions options)
     {
-        var image = NintendoStorageImage.Open(options.ImagePath, allowRawWiiUCandidate: false, options.KeyPath);
+        var image = NintendoStorageImage.Open(options.ActiveImagePath, allowRawWiiUCandidate: false, options.KeyPath);
         var partitions = image.Partitions.Select(ToCliPartition).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "Nintendo", partitions, image);
     }
 
     private static DriveAssistantImage? TryOpenPs2Image(CliOptions options)
     {
-        var image = Ps2StorageImage.Open(options.ImagePath);
+        var image = Ps2StorageImage.Open(options.ActiveImagePath);
         var partitions = image.Partitions.Select(ToCliPartition).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "PlayStation 2", partitions, image);
     }
 
     private static DriveAssistantImage? TryOpenGenericImage(CliOptions options)
     {
-        var image = GenericFileSystemImage.Open(options.ImagePath);
+        var image = GenericFileSystemImage.Open(options.ActiveImagePath);
         var partitions = image.Partitions.Select(ToCliPartition).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "Generic filesystem", partitions, image);
     }
 
     private static DriveAssistantImage? TryOpenLegacyImage(CliOptions options)
     {
-        var image = LegacyConsoleStorageImage.Open(options.ImagePath);
+        var image = LegacyConsoleStorageImage.Open(options.ActiveImagePath);
         var partitions = image.Partitions.Select(ToCliPartition).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "Legacy console/devkit", partitions, image);
     }
@@ -225,7 +225,7 @@ internal static class Program
             return null;
         }
 
-        var image = PlayStationStorageImage.Open(options.ImagePath, options.KeyPath);
+        var image = PlayStationStorageImage.Open(options.ActiveImagePath, options.KeyPath);
         var partitions = image.Volumes.Select(volume => (CliPartition)new PlayStationCliPartition(volume, $"Detected {volume.FamilyText}")).ToList();
         return partitions.Count == 0 ? null : new DriveAssistantImage(options.ImagePath, "PlayStation", partitions, image);
     }
@@ -301,6 +301,10 @@ The CLI is read-only against source images. It supports the same managed parser 
 internal sealed class CliOptions
 {
     public required string ImagePath { get; init; }
+
+    public string ActiveImagePath => Path.GetExtension(ImagePath).Equals(".imgc", StringComparison.OrdinalIgnoreCase)
+        ? ImgcDecoder.DecodeToTempRawImage(ImagePath)
+        : ImagePath;
 
     public string? EntryPath { get; init; }
 

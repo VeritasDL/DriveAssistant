@@ -1,0 +1,141 @@
+<Application x:Class="DriveAssistant.Avalonia.App"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource AppBgBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="FontFamily" Value="Inter, Noto Sans, Ubuntu, Segoe UI, Arial" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    </Style>
+
+    <Style Selector="Button">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="14,7" />
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.title-button">
+      <Setter Property="Background" Value="{DynamicResource TitleBarBgBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinWidth" Value="46" />
+      <Setter Property="MinHeight" Value="30" />
+    </Style>
+
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.secondary">
+      <Setter Property="Background" Value="{DynamicResource SecondaryButtonBgBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SecondaryButtonBorderBrush}" />
+    </Style>
+
+    <Style Selector="Button.panel-button">
+      <Setter Property="Background" Value="{DynamicResource SecondaryButtonBgBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SecondaryButtonBorderBrush}" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Width" Value="28" />
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="CornerRadius" Value="5" />
+    </Style>
+
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="{DynamicResource InputBgBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="9,7" />
+    </Style>
+
+    <Style Selector="ListBox">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="TreeView">
+      <Setter Property="Background" Value="{DynamicResource TreeBgBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TreeItemTextBrush}" />
+    </Style>
+
+    <Style Selector="DataGrid">
+      <Setter Property="Background" Value="{DynamicResource PanelBgBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="GridLinesVisibility" Value="Horizontal" />
+      <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource LineSoftBrush}" />
+      <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource LineSoftBrush}" />
+      <Setter Property="RowBackground" Value="{DynamicResource DataGridRowBgBrush}" />
+      <Setter Property="HeadersVisibility" Value="Column" />
+      <Setter Property="CanUserReorderColumns" Value="True" />
+      <Setter Property="CanUserResizeColumns" Value="True" />
+      <Setter Property="CanUserSortColumns" Value="True" />
+      <Setter Property="AutoGenerateColumns" Value="False" />
+      <Setter Property="IsReadOnly" Value="True" />
+      <Setter Property="RowHeight" Value="38" />
+      <Setter Property="ColumnHeaderHeight" Value="38" />
+    </Style>
+
+    <Style Selector="TabItem">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Padding" Value="16,8" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="MenuItem">
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+  </Application.Styles>
+
+  <Application.Resources>
+    <SolidColorBrush x:Key="AppBgBrush" Color="#111522" />
+    <SolidColorBrush x:Key="ToolbarBgBrush" Color="#171D2B" />
+    <SolidColorBrush x:Key="PanelBgBrush" Color="#181C2A" />
+    <SolidColorBrush x:Key="PanelBg2Brush" Color="#202637" />
+    <SolidColorBrush x:Key="PanelBg3Brush" Color="#283145" />
+    <SolidColorBrush x:Key="LineBrush" Color="#43506A" />
+    <SolidColorBrush x:Key="LineSoftBrush" Color="#303A50" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F8FAFC" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#CDD6E5" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#4A9EFF" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#203A5E" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#38D47B" />
+    <SolidColorBrush x:Key="TitleBarBgBrush" Color="#0F1420" />
+    <SolidColorBrush x:Key="TitleBarTextBrush" Color="#F8FAFC" />
+    <SolidColorBrush x:Key="SectionTextBrush" Color="#DCE7F7" />
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#9AA8BC" />
+    <SolidColorBrush x:Key="SecondaryButtonBgBrush" Color="#162033" />
+    <SolidColorBrush x:Key="SecondaryButtonBorderBrush" Color="#3A4964" />
+    <SolidColorBrush x:Key="InputBgBrush" Color="#111725" />
+    <SolidColorBrush x:Key="TreeBgBrush" Color="#151A28" />
+    <SolidColorBrush x:Key="TreeItemTextBrush" Color="#E6EEFB" />
+    <SolidColorBrush x:Key="DataGridRowBgBrush" Color="#171D2C" />
+    <SolidColorBrush x:Key="DataGridAltRowBgBrush" Color="#151B29" />
+    <SolidColorBrush x:Key="DataGridHeaderBgBrush" Color="#222A3B" />
+    <SolidColorBrush x:Key="ProgressTrackBgBrush" Color="#101725" />
+  </Application.Resources>
+</Application>

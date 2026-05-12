@@ -132,6 +132,8 @@ jobs:
           @"
           Portable Windows x64 build of Drive Assistant.
 
+          This release workflow also uploads Linux desktop and CLI tarballs for x64 and arm64 after the Windows package job completes.
+
           SHA256:
           ```${{ steps.package.outputs.sha256 }}```
           "@ | Set-Content -Path release-notes.md -Encoding UTF8
@@ -237,4 +239,94 @@ jobs:
           rid="${{ matrix.rid }}"
           archive_asset="${{ steps.package.outputs.archive }}#DriveAssistant.Cli-$version-$rid.tar.gz"
           sha_asset="${{ steps.package.outputs.sha }}#DriveAssistant.Cli-$version-$rid.tar.gz.sha256"
+          gh release upload "$version" "$archive_asset" "$sha_asset" --clobber
+
+  package-linux-desktop:
+    needs: package-windows
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64]
+
+    env:
+      DOTNET_NOLOGO: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          if ($version -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Version '$version' must look like v0.3.54."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore
+        run: dotnet restore DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj
+
+      - name: Publish self-contained Linux desktop app
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          publish_dir="$PWD/publish/DriveAssistant.Desktop-$version-$rid"
+          dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r "$rid" --self-contained true -o "$publish_dir"
+          cat > "$publish_dir/RUNNING_DRIVE_ASSISTANT_DESKTOP.txt" <<EOF
+          Drive Assistant desktop $version ($rid)
+
+          Run:
+            chmod +x "./Drive Assistant"
+            ./Drive\ Assistant
+
+          Minimal Ubuntu/WSL images may need:
+            sudo apt install libice6 libsm6 libx11-6 libxrandr2 libxcursor1 libxi6 libgl1 fontconfig
+
+          This is the Avalonia Linux desktop host. The WPF desktop host remains the Windows package.
+          EOF
+          echo "publish_dir=$publish_dir" >> "$GITHUB_ENV"
+
+      - name: Create tarball and checksum
+        id: package
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          archive="$PWD/publish/DriveAssistant.Desktop-$version-$rid.tar.gz"
+          tar -C "$publish_dir" -czf "$archive" .
+          sha="$(sha256sum "$archive" | awk '{print $1}')"
+          sha_file="$archive.sha256"
+          printf "%s  %s\n" "$sha" "$(basename "$archive")" > "$sha_file"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha_file" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DriveAssistant.Desktop-${{ steps.version.outputs.version }}-${{ matrix.rid }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.sha }}
+
+      - name: Publish Linux desktop assets
+        if: github.event_name == 'push' || inputs.publish_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          rid="${{ matrix.rid }}"
+          archive_asset="${{ steps.package.outputs.archive }}#DriveAssistant.Desktop-$version-$rid.tar.gz"
+          sha_asset="${{ steps.package.outputs.sha }}#DriveAssistant.Desktop-$version-$rid.tar.gz.sha256"
           gh release upload "$version" "$archive_asset" "$sha_asset" --clobber

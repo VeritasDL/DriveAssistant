@@ -1,0 +1,432 @@
+<Window x:Class="DriveAssistant.Avalonia.MainWindow"
+        xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DriveAssistant.Avalonia.ViewModels"
+        Title="Drive Assistant"
+        Width="1320"
+        Height="860"
+        MinWidth="900"
+        MinHeight="680"
+        SystemDecorations="None"
+        ExtendClientAreaToDecorationsHint="True"
+        CanResize="True">
+  <Window.DataTemplates>
+    <TreeDataTemplate DataType="{x:Type vm:DirectoryNodeViewModel}" ItemsSource="{Binding Children}">
+      <StackPanel Orientation="Horizontal" Margin="0,2">
+        <PathIcon Width="13" Height="13" Data="M3,6 L8,6 L10,8 L17,8 L17,16 L3,16 Z M3,6 L3,4 L8,4 L10,6 L17,6 L17,8" Foreground="{DynamicResource AccentBrush}" Margin="0,0,8,0" />
+        <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TreeItemTextBrush}" />
+      </StackPanel>
+    </TreeDataTemplate>
+  </Window.DataTemplates>
+
+  <Grid x:Name="RootShell">
+    <Grid.Background>
+      <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+        <GradientStop Color="#101421" Offset="0" />
+        <GradientStop Color="#151927" Offset="0.48" />
+        <GradientStop Color="#0F1624" Offset="1" />
+      </LinearGradientBrush>
+    </Grid.Background>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="30" />
+      <RowDefinition Height="55" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="40" />
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0"
+            Background="{DynamicResource TitleBarBgBrush}"
+            BorderBrush="{DynamicResource LineSoftBrush}"
+            BorderThickness="0,0,0,1"
+            PointerPressed="TitleBar_PointerPressed">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="46" />
+          <ColumnDefinition Width="46" />
+          <ColumnDefinition Width="46" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+          <PathIcon Width="16" Height="16" Data="M4,3 L16,3 L16,17 L4,17 Z M6,5 L14,5 L14,11 L6,11 Z M7,14 A1,1 0,1 0,7,16 A1,1 0,1 0,7,14 M13,14 A1,1 0,1 0,13,16 A1,1 0,1 0,13,14" Foreground="{DynamicResource AccentBrush}" Margin="0,0,7,0" />
+          <TextBlock Text="Drive Assistant" Foreground="{DynamicResource TitleBarTextBrush}" FontSize="12" VerticalAlignment="Center" />
+        </StackPanel>
+        <Button Grid.Column="1" Classes="title-button" Click="Minimize_Click" ToolTip.Tip="Minimize">
+          <PathIcon Width="12" Height="12" Data="M3,9 L17,9 L17,11 L3,11 Z" Foreground="{DynamicResource TitleBarTextBrush}" />
+        </Button>
+        <Button Grid.Column="2" Classes="title-button" Click="MaximizeRestore_Click" ToolTip.Tip="Maximize">
+          <PathIcon Width="12" Height="12" Data="M4,4 L16,4 L16,16 L4,16 Z M6,6 L14,6 L14,14 L6,14 Z" Foreground="{DynamicResource TitleBarTextBrush}" />
+        </Button>
+        <Button Grid.Column="3" Classes="title-button" Click="Close_Click" ToolTip.Tip="Close">
+          <PathIcon Width="12" Height="12" Data="M5,4 L10,9 L15,4 L16,5 L11,10 L16,15 L15,16 L10,11 L5,16 L4,15 L9,10 L4,5 Z" Foreground="{DynamicResource TitleBarTextBrush}" />
+        </Button>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1"
+            Background="{DynamicResource ToolbarBgBrush}"
+            BorderBrush="{DynamicResource LineSoftBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="12,7">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="300" MinWidth="240" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+          <Button Content="File" Height="30" MinWidth="54" Padding="12,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
+            <Button.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="Open Image...        Ctrl+O" Click="OpenImage_Click" />
+                <MenuItem Header="Set Key Folder..." Click="SetKeyPath_Click" />
+                <MenuItem Header="Set Key File..." Click="SetKeyFile_Click" />
+                <MenuItem Header="Save Selected...     Ctrl+E" Click="SaveSelected_Click" IsEnabled="{Binding HasExportSelection}" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          <Button Content="Analysis" Height="30" MinWidth="76" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
+            <Button.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="Metadata Scan        F5" Click="MetadataScan_Click" IsEnabled="{Binding CanRunMetadataScan}" />
+                <MenuItem Header="File Carver          Ctrl+F5" Click="FileCarver_Click" IsEnabled="{Binding CanRunFileCarver}" />
+                <MenuItem Header="Cancel Active Operation" Click="CancelOperation_Click" IsEnabled="{Binding CanCancelOperation}" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          <Button Content="View" Height="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
+            <Button.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="Search Results       Ctrl+F" Click="SearchResults_Click" />
+                <MenuItem Header="Show / Hide Partitions    Ctrl+1" Click="TogglePartitions_Click" />
+                <MenuItem Header="Show / Hide Inspector     Ctrl+2" Click="ToggleInspector_Click" />
+                <MenuItem Header="Pop Out / Dock Results    Ctrl+4" Click="ToggleResultsWindow_Click" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          <Button Content="Tools" Height="30" MinWidth="58" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
+            <Button.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="Add Custom Partition...    Ctrl+Shift+A" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
+                <MenuItem Header="Unmount Partition          Ctrl+U" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}" />
+                <MenuItem Header="Settings...                Ctrl+," Click="Settings_Click" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          <Button Content="Help" Height="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
+            <Button.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="About Drive Assistant    F1" Click="About_Click" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Classes="primary" Width="34" Height="30" MinWidth="34" Padding="0" Click="OpenImage_Click" ToolTip.Tip="Open Image">
+            <PathIcon Width="15" Height="15" Data="M3,7 L8,7 L10,9 L17,9 L17,16 L3,16 Z M3,5 L8,5 L10,7 L17,7 L17,9 L10,9 L8,7 L3,7 Z" />
+          </Button>
+          <Button Classes="secondary" Width="34" Height="30" MinWidth="34" Padding="0" Margin="6,0,0,0" IsEnabled="{Binding CanRunMetadataScan}" Click="MetadataScan_Click" ToolTip.Tip="Metadata Scan">
+            <PathIcon Width="15" Height="15" Data="M4,3 L13,3 L17,7 L17,17 L4,17 Z M13,4 L13,8 L17,8 Z M7,9 L15,9 L15,10 L7,10 Z M7,12 L15,12 L15,13 L7,13 Z M7,15 L12,15 L12,16 L7,16 Z" />
+          </Button>
+          <Button Classes="secondary" Width="34" Height="30" MinWidth="34" Padding="0" Margin="6,0,0,0" IsEnabled="{Binding CanRunFileCarver}" Click="FileCarver_Click" ToolTip.Tip="File Carver">
+            <PathIcon Width="15" Height="15" Data="M8,3 A5,5 0,1 0,8,13 A5,5 0,1 0,8,3 M8,5 A3,3 0,1 1,8,11 A3,3 0,1 1,8,5 M12,12 L17,17 L16,18 L11,13 Z" />
+          </Button>
+          <Button Classes="secondary" Width="34" Height="30" MinWidth="34" Padding="0" Margin="6,0,0,0" IsEnabled="{Binding CanCancelOperation}" Click="CancelOperation_Click" ToolTip.Tip="Cancel active operation">
+            <PathIcon Width="15" Height="15" Data="M5,5 L15,5 L15,15 L5,15 Z" />
+          </Button>
+          <Border Width="1" Margin="10,4" Background="{DynamicResource LineSoftBrush}" />
+          <Button Classes="secondary" Height="30" MinWidth="94" Padding="10,0" Click="SetKeyPath_Click" ToolTip.Tip="Set optional console key folder or file">
+            <TextBlock Text="Key Path" />
+          </Button>
+          <Button x:Name="ShowPartitionsButton" Classes="secondary" Width="34" Height="30" MinWidth="34" Padding="0" Margin="8,0,0,0" IsVisible="False" Click="RestorePartitions_Click" ToolTip.Tip="Restore partitions">
+            <PathIcon Width="15" Height="15" Data="M3,4 L17,4 L17,16 L3,16 Z M5,6 L9,6 L9,14 L5,14 Z M10,6 L15,6 L15,8 L10,8 Z M10,10 L15,10 L15,12 L10,12 Z" />
+          </Button>
+          <Button x:Name="ShowInspectorButton" Classes="secondary" Width="34" Height="30" MinWidth="34" Padding="0" Margin="6,0,0,0" IsVisible="False" Click="RestoreInspector_Click" ToolTip.Tip="Restore inspector">
+            <PathIcon Width="15" Height="15" Data="M10,3 A7,7 0,1 0,10,17 A7,7 0,1 0,10,3 M9,8 L11,8 L11,15 L9,15 Z M9,5 L11,5 L11,7 L9,7 Z" />
+          </Button>
+          <Button x:Name="ToggleResultsWindowButton" Classes="secondary" Height="30" MinWidth="96" Padding="10,0" Margin="6,0,0,0" Click="ToggleResultsWindow_Click" ToolTip.Tip="Pop out or dock results">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+              <PathIcon Width="14" Height="14" Data="M4,4 L15,4 L15,15 L4,15 Z M6,6 L13,6 L13,13 L6,13 Z M8,2 L18,2 L18,12 L16,12 L16,4 L8,4 Z" />
+              <TextBlock x:Name="ToggleResultsWindowText" Text="Pop Out" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <Grid Grid.Column="3" VerticalAlignment="Center">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="SearchBox" Text="{Binding SearchText}" Watermark="Search file results" Height="40" VerticalContentAlignment="Center" />
+          <Button Grid.Column="1" Classes="primary" Content="Find" Height="40" MinWidth="72" Width="72" Margin="10,0,0,0" Click="Search_Click" />
+        </Grid>
+      </Grid>
+    </Border>
+
+    <Grid x:Name="ContentGrid" Grid.Row="2" Margin="18">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="280" MinWidth="0" />
+        <ColumnDefinition Width="6" />
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="6" />
+        <ColumnDefinition Width="320" MinWidth="0" />
+      </Grid.ColumnDefinitions>
+
+      <Border x:Name="PartitionsPanel" Grid.Column="0" Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+        <Grid>
+          <Border Width="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left" CornerRadius="6,0,0,6" />
+          <Grid Margin="16,16,12,14">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid Margin="0,0,0,12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="PARTITIONS" Foreground="{DynamicResource SectionTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <Button Grid.Column="1" Classes="panel-button" Click="MinimizePartitions_Click" ToolTip.Tip="Minimize partitions">
+                <PathIcon Width="12" Height="12" Data="M4,9 L16,9 L16,11 L4,11 Z" />
+              </Button>
+              <Button Grid.Column="2" Classes="panel-button" Margin="6,0,0,0" Click="ClosePartitions_Click" ToolTip.Tip="Close partitions">
+                <PathIcon Width="12" Height="12" Data="M5,4 L10,9 L15,4 L16,5 L11,10 L16,15 L15,16 L10,11 L5,16 L4,15 L9,10 L4,5 Z" />
+              </Button>
+            </Grid>
+            <ListBox Grid.Row="1" ItemsSource="{Binding Partitions}" SelectedItem="{Binding SelectedPartition, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:PartitionViewModel}">
+                  <Border Padding="10" Margin="0,0,0,8" Background="{DynamicResource PanelBg2Brush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="22" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <PathIcon Width="15" Height="15" Data="M4,3 L16,3 L16,17 L4,17 Z M6,5 L14,5 M6,13 L14,13 M7,15 L9,15" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Top" />
+                      <StackPanel Grid.Column="1">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding OffsetText}" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+                        <TextBlock Text="{Binding StatusDisplay}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Grid>
+      </Border>
+
+      <Border x:Name="PartitionsRail" Grid.Column="0" Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6" IsVisible="False">
+        <Button Width="42" MinWidth="42" MinHeight="96" Padding="0" Click="RestorePartitions_Click" ToolTip.Tip="Restore partitions">
+          <StackPanel>
+            <PathIcon Width="16" Height="16" Data="M3,4 L17,4 L17,16 L3,16 Z M5,6 L9,6 L9,14 L5,14 Z M10,6 L15,6 L15,8 L10,8 Z M10,10 L15,10 L15,12 L10,12 Z" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+            <TextBlock Text="Partitions" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+      </Border>
+
+      <GridSplitter x:Name="PartitionsSplitter" Grid.Column="1" Width="6" Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="2*" />
+          <RowDefinition Height="18" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+          <Grid Margin="12">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="318" MinWidth="220" />
+              <ColumnDefinition Width="6" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="{DynamicResource TreeBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="64" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Border Background="{DynamicResource DataGridHeaderBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="0,0,0,1" CornerRadius="6,6,0,0" Padding="16,9">
+                  <StackPanel VerticalAlignment="Center" Spacing="4">
+                    <TextBlock Text="{Binding CurrentFileSystemTitle}" Foreground="{DynamicResource SectionTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding CurrentDirectorySummary}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </Border>
+                <TreeView Grid.Row="1" ItemsSource="{Binding DirectoryRoots}" SelectedItem="{Binding SelectedDirectory, Mode=TwoWay}" />
+              </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="6" Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+            <Border Grid.Column="2" Background="{DynamicResource DataGridRowBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Border Background="{DynamicResource DataGridHeaderBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="0,0,0,1" CornerRadius="6,6,0,0" Padding="12,8">
+                  <TextBlock Text="{Binding CurrentDirectorySummary}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                </Border>
+                <DataGrid Grid.Row="1" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile, Mode=TwoWay}" DoubleTapped="Files_DoubleTapped">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                    <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+                    <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="120" />
+                    <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
+                  </DataGrid.Columns>
+                </DataGrid>
+              </Grid>
+            </Border>
+          </Grid>
+        </Border>
+
+        <GridSplitter Grid.Row="1" Height="18" Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Cursor="SizeNorthSouth" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
+
+        <Border Grid.Row="2" Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+          <Grid>
+          <TabControl x:Name="ResultsTabs">
+            <TabItem x:Name="RecoveryTab" Header="Recovery View">
+              <DataGrid ItemsSource="{Binding MetadataResults}" SelectedItem="{Binding SelectedMetadataResult, Mode=TwoWay}">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                  <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+                  <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="120" />
+                  <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+            <TabItem x:Name="CarverTab" Header="Carved Files">
+              <DataGrid ItemsSource="{Binding CarvedFiles}" SelectedItem="{Binding SelectedCarvedFile, Mode=TwoWay}">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                  <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+                  <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="120" />
+                  <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+            <TabItem x:Name="ClusterTab" Header="Cluster Map">
+              <DataGrid ItemsSource="{Binding ClusterRows}" SelectedItem="{Binding SelectedClusterRow, Mode=TwoWay}">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Unit" Binding="{Binding Unit}" Width="*" />
+                  <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="130" />
+                  <DataGridTextColumn Header="Occupants" Binding="{Binding Occupants}" Width="2*" />
+                  <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="150" />
+                  <DataGridTextColumn Header="Length" Binding="{Binding Length}" Width="110" />
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+            <TabItem x:Name="LogTab" Header="Log">
+              <Grid RowDefinitions="Auto,*">
+                <ItemsControl ItemsSource="{Binding ScanProgressRows}" Margin="12,10,12,4">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:ScanProgressRowViewModel}">
+                      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="{Binding Text}" Foreground="{DynamicResource MutedBrush}" />
+                        <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Height="10" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="{Binding Value}" IsIndeterminate="{Binding IsIndeterminate}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBox Grid.Row="1" Text="{Binding LogText}" AcceptsReturn="True" IsReadOnly="True" Background="Transparent" BorderThickness="0" TextWrapping="Wrap" />
+              </Grid>
+            </TabItem>
+          </TabControl>
+          <Button x:Name="ResultsPanelDetachButton" ZIndex="2" Classes="secondary" HorizontalAlignment="Right" VerticalAlignment="Top" Height="28" MinHeight="28" MinWidth="88" Padding="10,0" Margin="0,1,4,0" Click="ToggleResultsWindow_Click" ToolTip.Tip="Pop out or dock results">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+              <PathIcon Width="13" Height="13" Data="M4,4 L15,4 L15,15 L4,15 Z M6,6 L13,6 L13,13 L6,13 Z M8,2 L18,2 L18,12 L16,12 L16,4 L8,4 Z" />
+              <TextBlock x:Name="ResultsPanelDetachText" Text="Pop Out" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="6" Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+      <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6">
+        <Grid Margin="20">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="INSPECTOR" Foreground="{DynamicResource SectionTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="panel-button" Click="MinimizeInspector_Click" ToolTip.Tip="Minimize inspector">
+              <PathIcon Width="12" Height="12" Data="M4,9 L16,9 L16,11 L4,11 Z" />
+            </Button>
+            <Button Grid.Column="2" Classes="panel-button" Margin="6,0,0,0" Click="CloseInspector_Click" ToolTip.Tip="Close inspector">
+              <PathIcon Width="12" Height="12" Data="M5,4 L10,9 L15,4 L16,5 L11,10 L16,15 L15,16 L10,11 L5,16 L4,15 L9,10 L4,5 Z" />
+            </Button>
+          </Grid>
+          <ScrollViewer Grid.Row="1">
+            <StackPanel>
+              <TextBlock Text="{Binding InspectorTitle}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding InspectorSubtitle}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,7,0,20" />
+              <ItemsControl ItemsSource="{Binding InspectorRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate DataType="{x:Type vm:InspectorRowViewModel}">
+                    <Border Background="{DynamicResource PanelBg2Brush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6" Padding="11" Margin="0,0,0,10">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="128" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Label}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,12,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+
+      <Border x:Name="InspectorRail" Grid.Column="4" Background="{DynamicResource PanelBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="1" CornerRadius="6" IsVisible="False">
+        <Button Width="42" MinWidth="42" MinHeight="96" Padding="0" Click="RestoreInspector_Click" ToolTip.Tip="Restore inspector">
+          <StackPanel>
+            <PathIcon Width="16" Height="16" Data="M10,3 A7,7 0,1 0,10,17 A7,7 0,1 0,10,3 M9,8 L11,8 L11,15 L9,15 Z M9,5 L11,5 L11,7 L9,7 Z" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+            <TextBlock Text="Inspector" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="3" Background="{DynamicResource ToolbarBgBrush}" BorderBrush="{DynamicResource LineSoftBrush}" BorderThickness="0,1,0,0">
+      <Grid Margin="18,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="190" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Ellipse Width="8" Height="8" Fill="{DynamicResource SuccessBrush}" Margin="0,0,9,0" />
+          <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+        </StackPanel>
+        <ProgressBar Grid.Column="1" Height="12" IsIndeterminate="{Binding IsBusy}" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <Border ZIndex="100" Height="6" VerticalAlignment="Top" Background="Transparent" Cursor="SizeNorthSouth" PointerPressed="ResizeNorth_PointerPressed" />
+    <Border ZIndex="100" Height="6" VerticalAlignment="Bottom" Background="Transparent" Cursor="SizeNorthSouth" PointerPressed="ResizeSouth_PointerPressed" />
+    <Border ZIndex="100" Width="6" HorizontalAlignment="Left" Background="Transparent" Cursor="SizeWestEast" PointerPressed="ResizeWest_PointerPressed" />
+    <Border ZIndex="100" Width="6" HorizontalAlignment="Right" Background="Transparent" Cursor="SizeWestEast" PointerPressed="ResizeEast_PointerPressed" />
+    <Border ZIndex="101" Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Top" Background="Transparent" Cursor="TopLeftCorner" PointerPressed="ResizeNorthWest_PointerPressed" />
+    <Border ZIndex="101" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Top" Background="Transparent" Cursor="TopRightCorner" PointerPressed="ResizeNorthEast_PointerPressed" />
+    <Border ZIndex="101" Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="Transparent" Cursor="BottomLeftCorner" PointerPressed="ResizeSouthWest_PointerPressed" />
+    <Border ZIndex="101" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="Transparent" Cursor="BottomRightCorner" PointerPressed="ResizeSouthEast_PointerPressed" />
+  </Grid>
+</Window>

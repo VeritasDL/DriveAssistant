@@ -96,8 +96,13 @@ namespace FATXTools.DiskTypes
                     }
 
                     var tag = Encoding.ASCII.GetString(blockHeader, 0, 4);
+                    if (tag != "omg!" && tag != "lol!" && IsImgcFooter(input, blockStart, blockHeader))
+                    {
+                        break;
+                    }
+
                     var size = BitConverter.ToUInt32(blockHeader, 4);
-                    var payloadSize = GetPayloadSize(input, blockStart, size);
+                    var payloadSize = GetPayloadSize(input, blockStart, tag, size);
 
                     if (tag == "omg!")
                     {
@@ -141,11 +146,16 @@ namespace FATXTools.DiskTypes
             }
         }
 
-        private static uint GetPayloadSize(Stream input, long blockStart, uint declaredSize)
+        private static uint GetPayloadSize(Stream input, long blockStart, string tag, uint declaredSize)
         {
             if (declaredSize < BlockHeaderSize)
             {
                 return declaredSize;
+            }
+
+            if (tag == "omg!" && declaredSize == BlockHeaderSize * 2)
+            {
+                return declaredSize - BlockHeaderSize;
             }
 
             var payloadSizedNext = blockStart + BlockHeaderSize + declaredSize;
@@ -161,6 +171,35 @@ namespace FATXTools.DiskTypes
             }
 
             return declaredSize;
+        }
+
+        private static bool IsImgcFooter(Stream input, long position, byte[] firstBytes)
+        {
+            var current = input.Position;
+            try
+            {
+                input.Position = position;
+                var length = (int)Math.Min(128, input.Length - position);
+                if (length <= 0)
+                {
+                    return true;
+                }
+
+                var buffer = new byte[length];
+                Buffer.BlockCopy(firstBytes, 0, buffer, 0, Math.Min(firstBytes.Length, buffer.Length));
+                var remaining = length - firstBytes.Length;
+                if (remaining > 0)
+                {
+                    input.Read(buffer, firstBytes.Length, remaining);
+                }
+
+                var text = Encoding.ASCII.GetString(buffer);
+                return text.IndexOf("HDD Raw Copy Tool", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            finally
+            {
+                input.Position = current;
+            }
         }
 
         private static bool IsBlockBoundary(Stream input, long position)

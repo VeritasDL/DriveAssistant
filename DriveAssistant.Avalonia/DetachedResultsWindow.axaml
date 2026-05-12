@@ -1,0 +1,55 @@
+<Window x:Class="DriveAssistant.Avalonia.DetachedResultsWindow"
+        xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Drive Assistant Results"
+        Width="900"
+        Height="520"
+        MinWidth="720"
+        MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="Auto,*" Background="{DynamicResource PanelBgBrush}">
+    <Border Background="{DynamicResource ToolbarBgBrush}"
+            BorderBrush="{DynamicResource LineSoftBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="14,10">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="Detached Results"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1"
+                Classes="secondary"
+                Content="Dock"
+                Height="30"
+                MinWidth="72"
+                Padding="12,0"
+                Click="Dock_Click" />
+      </Grid>
+    </Border>
+
+    <TabControl Grid.Row="1">
+      <TabItem Header="Recovery View">
+        <DataGrid ItemsSource="{Binding MetadataResults}"
+                  SelectedItem="{Binding SelectedMetadataResult, Mode=TwoWay}">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+            <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="120" />
+            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+      <TabItem Header="Carved Files">
+        <DataGrid ItemsSource="{Binding CarvedFiles}"
+                  SelectedItem="{Binding SelectedCarvedFile, Mode=TwoWay}">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+            <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="120" />
+            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</Window>

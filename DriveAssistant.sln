@@ -13,6 +13,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DriveAssistant.Wpf.Tests", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriveAssistant.Cli", "DriveAssistant.Cli\DriveAssistant.Cli.csproj", "{E6571F8E-4790-471A-8B73-589BDDDCF61F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriveAssistant.Avalonia", "DriveAssistant.Avalonia\DriveAssistant.Avalonia.csproj", "{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x64.Build.0 = Release|Any CPU
 		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x86.ActiveCfg = Release|Any CPU
 		{E6571F8E-4790-471A-8B73-589BDDDCF61F}.Release|x86.Build.0 = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|x64.Build.0 = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Debug|x86.Build.0 = Debug|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|x64.ActiveCfg = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|x64.Build.0 = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|x86.ActiveCfg = Release|Any CPU
+		{E6B8D80D-FF2C-4D4B-ACC1-4C81D4640D0B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

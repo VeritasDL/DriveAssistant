@@ -1,6 +1,6 @@
 # Drive Assistant
 
-Drive Assistant is a disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images. The desktop UI is Windows/WPF, and the `drive-assistant` CLI runs on Linux/macOS/Windows for terminal workflows. It is designed for read-only analysis: open an image, inspect the partition layout, browse recoverable files, run metadata scans, carve known file formats, and export data without modifying the source.
+Drive Assistant is a disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images. The Windows desktop UI remains WPF, the Linux desktop UI is Avalonia, and the `drive-assistant` CLI runs on Linux/macOS/Windows for terminal workflows. It is designed for read-only analysis: open an image, inspect the partition layout, browse recoverable files, run metadata scans, carve known file formats, and export data without modifying the source.
 
 The project has a general recovery-tool foundation with a strong focus on console storage formats. The long-term goal is support for most Nintendo console drives, all PlayStation and Xbox console HDDs/SSDs where technically practical, and common PC filesystems.
 
@@ -161,7 +161,20 @@ Download the latest Windows x64 ZIP from [GitHub Releases](https://github.com/ra
 
 The portable release package is self-contained and includes the .NET runtime.
 
-Linux users can download the latest `DriveAssistant.Cli-*-linux-x64.tar.gz` or `DriveAssistant.Cli-*-linux-arm64.tar.gz` release asset, extract it, and run:
+Linux desktop users can download the latest `DriveAssistant.Desktop-*-linux-x64.tar.gz` or `DriveAssistant.Desktop-*-linux-arm64.tar.gz` release asset, extract it, and run:
+
+```bash
+chmod +x ./Drive\ Assistant
+./Drive\ Assistant
+```
+
+On minimal Ubuntu/WSL images, install the small X11/Avalonia runtime libraries first:
+
+```bash
+sudo apt install libice6 libsm6 libx11-6 libxrandr2 libxcursor1 libxi6 libgl1 fontconfig
+```
+
+Linux terminal users can download the latest `DriveAssistant.Cli-*-linux-x64.tar.gz` or `DriveAssistant.Cli-*-linux-arm64.tar.gz` release asset, extract it, and run:
 
 ```bash
 chmod +x ./drive-assistant
@@ -171,7 +184,8 @@ chmod +x ./drive-assistant
 ## Requirements
 
 - Windows 10/11 for the WPF desktop app.
-- Linux x64 or arm64 for CLI release tarballs. Ubuntu, Debian, Fedora, Arch, and Nix/NixOS source workflows are supported through .NET 8.
+- Linux x64 or arm64 for Avalonia desktop and CLI release tarballs. Ubuntu, Debian, Fedora, Arch, and Nix/NixOS source workflows are supported through .NET 8.
+- Minimal Linux desktops must provide common Avalonia/X11 runtime libraries such as `libice6`, `libsm6`, `libx11-6`, `libxrandr2`, `libxcursor1`, `libxi6`, `libgl1`, and `fontconfig`.
 - .NET 8 SDK for building from source.
 - Visual Studio 2022 is optional but recommended for UI work.
 
@@ -196,6 +210,12 @@ Run the app from the build output:
 & ".\DriveAssistant.Wpf\bin\Release\net8.0-windows\Drive Assistant.exe"
 ```
 
+Run the Linux-capable Avalonia desktop app from source:
+
+```bash
+dotnet run --project DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj
+```
+
 Run the cross-platform CLI from source:
 
 ```bash
@@ -209,6 +229,7 @@ Nix source workflow:
 ```bash
 nix develop
 dotnet test DriveAssistant.sln
+nix run .#drive-assistant-desktop
 nix run .#drive-assistant -- info ./disk.img
 ```
 
@@ -247,11 +268,19 @@ dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-
 dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-arm64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-arm64
 ```
 
+Self-contained Linux Avalonia desktop publish:
+
+```bash
+dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Desktop-linux-x64
+dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r linux-arm64 --self-contained true -o ./publish/DriveAssistant.Desktop-linux-arm64
+```
+
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
 | `DriveAssistant.Wpf` | Active Windows WPF desktop application, published as `Drive Assistant.exe`. |
+| `DriveAssistant.Avalonia` | Linux-capable Avalonia desktop application with the same major WPF layout regions. |
 | `DriveAssistant.Cli` | Cross-platform terminal host for Linux/macOS/Windows, published as `drive-assistant`. |
 | `DriveAssistant.Wpf.Tests` | Tests for image readers and WPF-supporting scanners. |
 | `DriveAssistant.Shared` | Shared support files used by the WPF app. |
