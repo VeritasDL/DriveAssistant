@@ -77,6 +77,16 @@ XBOX_STORAGE_SUPPORT_WORK_LOG.MD
 FATX_RECOVERY_ZERO_FILL_AND_REBUILD_NOTES.md
 SmokeHarness/
 
+# Markdown allowlist: ignore all markdown except approved docs
+*.md
+*.MD
+!README.md
+!docs/console-devkit-models.md
+!docs/real-image-fixtures.md
+!docs/TROUBLESHOOTING.md
+!docs/USER_GUIDE.md
+!docs/example-key-files/README.md
+
 # StyleCop
 StyleCopReport.xml
 
