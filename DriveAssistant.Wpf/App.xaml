@@ -12,9 +12,13 @@
         <Color x:Key="LineSoft">#303A50</Color>
         <Color x:Key="Text">#F8FAFC</Color>
         <Color x:Key="Muted">#CDD6E5</Color>
-        <Color x:Key="Accent">#4A9EFF</Color>
-        <Color x:Key="AccentSoft">#203A5E</Color>
-        <Color x:Key="Success">#38D47B</Color>
+        <Color x:Key="Accent">#4A9EFF</Color> 
+        <Color x:Key="AccentSoft">#203A5E</Color> 
+        <Color x:Key="PrimaryButtonBg">#3E7FD1</Color>
+        <Color x:Key="PrimaryButtonHoverBg">#4A8CDD</Color>
+        <Color x:Key="PrimaryButtonPressedBg">#346EB8</Color>
+        <Color x:Key="PrimaryButtonBorder">#639EDF</Color>
+        <Color x:Key="Success">#38D47B</Color> 
         <Color x:Key="TitleBarBg">#0F1420</Color>
         <Color x:Key="TitleBarText">#F8FAFC</Color>
         <Color x:Key="RootGradientStart">#101421</Color>
@@ -53,9 +57,13 @@
         <SolidColorBrush x:Key="LineSoftBrush" Color="{StaticResource LineSoft}" />
         <SolidColorBrush x:Key="TextBrush" Color="{StaticResource Text}" />
         <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource Muted}" />
-        <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoft}" />
-        <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource Success}" />
+        <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" /> 
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoft}" /> 
+        <SolidColorBrush x:Key="PrimaryButtonBgBrush" Color="{StaticResource PrimaryButtonBg}" />
+        <SolidColorBrush x:Key="PrimaryButtonHoverBgBrush" Color="{StaticResource PrimaryButtonHoverBg}" />
+        <SolidColorBrush x:Key="PrimaryButtonPressedBgBrush" Color="{StaticResource PrimaryButtonPressedBg}" />
+        <SolidColorBrush x:Key="PrimaryButtonBorderBrush" Color="{StaticResource PrimaryButtonBorder}" />
+        <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource Success}" /> 
         <SolidColorBrush x:Key="TitleBarBgBrush" Color="{StaticResource TitleBarBg}" />
         <SolidColorBrush x:Key="TitleBarTextBrush" Color="{StaticResource TitleBarText}" />
         <SolidColorBrush x:Key="SectionTextBrush" Color="{StaticResource SectionText}" />
@@ -113,19 +121,23 @@
             <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         </Style>
 
-        <Style TargetType="ToolTip">
-            <Setter Property="Background" Value="{DynamicResource PanelBg3Brush}" />
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="10,7" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MaxWidth" Value="280" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ToolTip">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
+        <Style TargetType="ToolTip"> 
+            <Setter Property="Background" Value="{DynamicResource PanelBg3Brush}" /> 
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" /> 
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" /> 
+            <Setter Property="BorderThickness" Value="1" /> 
+            <Setter Property="Padding" Value="10,7" /> 
+            <Setter Property="FontSize" Value="12" /> 
+            <Setter Property="MaxWidth" Value="420" />
+            <Setter Property="Placement" Value="Mouse" />
+            <Setter Property="HorizontalOffset" Value="14" />
+            <Setter Property="VerticalOffset" Value="12" />
+            <Setter Property="TextBlock.TextWrapping" Value="Wrap" />
+            <Setter Property="Template"> 
+                <Setter.Value> 
+                    <ControlTemplate TargetType="ToolTip"> 
+                        <Border Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="6"
                                 Padding="{TemplateBinding Padding}"
@@ -182,12 +194,43 @@
             </Setter>
         </Style>
 
-        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"> 
+            <Setter Property="Background" Value="{DynamicResource PrimaryButtonBgBrush}" /> 
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryButtonBorderBrush}" /> 
+            <Setter Property="Foreground" Value="White" /> 
+            <Setter Property="FontWeight" Value="SemiBold" /> 
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PrimaryButtonHoverBgBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource PrimaryButtonHoverBgBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PrimaryButtonPressedBgBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource PrimaryButtonPressedBgBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}" />
+                                <Setter TargetName="Root" Property="Opacity" Value="0.82" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style> 
 
         <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="{DynamicResource SecondaryButtonBgBrush}" />

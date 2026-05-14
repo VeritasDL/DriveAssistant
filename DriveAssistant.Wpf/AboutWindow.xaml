@@ -1,0 +1,167 @@
+<Window x:Class="FATXTools.Wpf.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="About Drive Assistant"
+        Width="680"
+        Height="520"
+        MinWidth="620"
+        MinHeight="460"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        WindowStyle="None"
+        Background="{DynamicResource AppBgBrush}"
+        Foreground="{DynamicResource TextBrush}">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="30"
+                            ResizeBorderThickness="6"
+                            GlassFrameThickness="0"
+                            CornerRadius="0"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+    <Border Margin="6"
+            Background="{DynamicResource AppBgBrush}"
+            BorderBrush="#2D4A78B8"
+            BorderThickness="1"
+            CornerRadius="8">
+        <Border.Effect>
+            <DropShadowEffect Color="#4A82C9FF"
+                              BlurRadius="10"
+                              ShadowDepth="0"
+                              Opacity="0.14" />
+        </Border.Effect>
+        <Grid Background="{DynamicResource AppBgBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="30" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    Background="{DynamicResource TitleBarBgBrush}"
+                    BorderBrush="{DynamicResource LineSoftBrush}"
+                    BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="46" />
+                        <ColumnDefinition Width="46" />
+                        <ColumnDefinition Width="46" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Image Source="appicon.ico" Width="16" Height="16" Margin="0,0,7,0" />
+                        <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   Foreground="{DynamicResource TitleBarTextBrush}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            FocusVisualStyle="{x:Null}"
+                            Focusable="False"
+                            Content="&#xE921;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="10"
+                            Foreground="{DynamicResource TitleBarTextBrush}"
+                            MinWidth="46"
+                            MinHeight="30"
+                            Padding="0"
+                            BorderThickness="0"
+                            ToolTip="Minimize"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="MinimizeWindow_Click" />
+                    <Button Grid.Column="2"
+                            FocusVisualStyle="{x:Null}"
+                            Focusable="False"
+                            Content="&#xE922;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="10"
+                            Foreground="{DynamicResource TitleBarTextBrush}"
+                            MinWidth="46"
+                            MinHeight="30"
+                            Padding="0"
+                            BorderThickness="0"
+                            ToolTip="Maximize"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="MaximizeRestoreWindow_Click" />
+                    <Button Grid.Column="3"
+                            FocusVisualStyle="{x:Null}"
+                            Focusable="False"
+                            Content="&#xE8BB;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="10"
+                            Foreground="{DynamicResource TitleBarTextBrush}"
+                            MinWidth="46"
+                            MinHeight="30"
+                            Padding="0"
+                            BorderThickness="0"
+                            ToolTip="Close"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="CloseWindow_Click" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Background="{DynamicResource AppBgBrush}" Padding="20">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel>
+                        <TextBlock Text="About Drive Assistant" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+
+                    <Border Grid.Row="2"
+                            Background="{DynamicResource PanelBgBrush}"
+                            BorderBrush="{DynamicResource LineSoftBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="10" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="10" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="10" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock TextWrapping="Wrap"
+                                       Text="Current focus: practical browsing, metadata recovery, file carving, and safe export workflows for general filesystems plus Xbox, PlayStation, and Nintendo storage." />
+
+                            <TextBlock Grid.Row="2"
+                                       TextWrapping="Wrap"
+                                       Text="Long-term goal: broad support for Nintendo, PlayStation, and Xbox storage where technically practical, plus common PC disk images." />
+
+                            <TextBlock Grid.Row="4" x:Name="BuildInfoTextBlock" />
+
+                            <Grid Grid.Row="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="8" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock>
+                                    <Run Text="Project: " />
+                                    <Hyperlink Click="ProjectHyperlink_Click">https://github.com/rain0x06/DriveAssistant</Hyperlink>
+                                </TextBlock>
+                                <TextBlock Grid.Row="2">
+                                    <Run Text="Original FATXTools: " />
+                                    <Hyperlink Click="OriginalProjectHyperlink_Click">https://github.com/aerosoul94/FATXTools</Hyperlink>
+                                </TextBlock>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                        <Button Content="Close" Width="96" Style="{StaticResource PrimaryButton}" Click="CloseWindow_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

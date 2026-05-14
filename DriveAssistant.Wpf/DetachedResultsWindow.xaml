@@ -20,6 +20,17 @@
                             CornerRadius="0"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
+    <Border Margin="6"
+            Background="{DynamicResource AppBgBrush}"
+            BorderBrush="#2D4A78B8"
+            BorderThickness="1"
+            CornerRadius="8">
+        <Border.Effect>
+            <DropShadowEffect Color="#4A82C9FF"
+                              BlurRadius="10"
+                              ShadowDepth="0"
+                              Opacity="0.14" />
+        </Border.Effect>
     <Grid x:Name="RootShell">
         <Grid.RowDefinitions>
             <RowDefinition Height="34" />
@@ -48,6 +59,8 @@
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <Button Grid.Column="1"
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
                         Content="Dock"
                         MinWidth="64"
                         MinHeight="24"
@@ -56,6 +69,8 @@
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
                         Click="Dock_Click" />
                 <Button Grid.Column="2"
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
                         Content="&#xE921;"
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
@@ -68,6 +83,8 @@
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
                         Click="MinimizeWindow_Click" />
                 <Button Grid.Column="3"
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
                         Content="&#xE922;"
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
@@ -80,6 +97,8 @@
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
                         Click="MaximizeRestoreWindow_Click" />
                 <Button Grid.Column="4"
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
                         Content="&#xE8BB;"
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
@@ -103,4 +122,5 @@
             <TabControl x:Name="DetachedTabs" Margin="12" />
         </Border>
     </Grid>
+    </Border>
 </Window>

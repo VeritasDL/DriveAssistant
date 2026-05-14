@@ -66,7 +66,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private ImageSource? _inspectorPreviewImage;
     private bool _isInspectorPreviewVisible;
     private string _currentFileSystemTitle = "ORIGINAL FILESYSTEM";
-    private string _currentDirectorySummary = "Open image to browse HDD tree.";
+    private string _currentDirectorySummary = string.Empty;
     private bool _isScanProgressVisible;
     private double _scanProgressValue;
     private string _scanProgressText = "0%";
@@ -716,10 +716,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.XboxFatx)
+        if (imageKind is ConsoleDriveImageKind.Auto
+            or ConsoleDriveImageKind.XboxOriginalFatx
+            or ConsoleDriveImageKind.Xbox360Fatx)
         {
             var openedAsFatx = await OpenFatxImagePathAsync(imagePath);
-            if (openedAsFatx || imageKind == ConsoleDriveImageKind.XboxFatx)
+            if (openedAsFatx
+                || imageKind == ConsoleDriveImageKind.XboxOriginalFatx
+                || imageKind == ConsoleDriveImageKind.Xbox360Fatx)
             {
                 return;
             }
@@ -743,10 +747,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
 
-        if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.NintendoWiiWiiU)
+        if (imageKind is ConsoleDriveImageKind.Auto
+            or ConsoleDriveImageKind.NintendoWiiGameCube
+            or ConsoleDriveImageKind.NintendoWiiUStorage
+            or ConsoleDriveImageKind.NintendoDs3ds)
         {
-            var openedAsNintendo = await OpenNintendoImagePathAsync(imagePath, allowRawWiiUCandidate: imageKind == ConsoleDriveImageKind.NintendoWiiWiiU, keyPath);
-            if (openedAsNintendo || imageKind == ConsoleDriveImageKind.NintendoWiiWiiU)
+            var openedAsNintendo = await OpenNintendoImagePathAsync(
+                imagePath,
+                allowRawWiiUCandidate: imageKind == ConsoleDriveImageKind.NintendoWiiUStorage,
+                keyPath);
+            if (openedAsNintendo
+                || imageKind == ConsoleDriveImageKind.NintendoWiiGameCube
+                || imageKind == ConsoleDriveImageKind.NintendoWiiUStorage
+                || imageKind == ConsoleDriveImageKind.NintendoDs3ds)
             {
                 return;
             }
@@ -770,13 +783,52 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
 
-        if (imageKind is ConsoleDriveImageKind.Auto or ConsoleDriveImageKind.LegacyDevkitMedia)
+        if (imageKind is ConsoleDriveImageKind.Auto
+            or ConsoleDriveImageKind.LegacyDevkitMedia
+            or ConsoleDriveImageKind.PlayStation1Media)
         {
             var openedAsLegacy = await OpenLegacyConsoleImagePathAsync(imagePath);
-            if (openedAsLegacy || imageKind == ConsoleDriveImageKind.LegacyDevkitMedia)
+            if (openedAsLegacy
+                || imageKind == ConsoleDriveImageKind.LegacyDevkitMedia
+                || imageKind == ConsoleDriveImageKind.PlayStation1Media)
             {
                 return;
             }
+        }
+
+        if (imageKind == ConsoleDriveImageKind.Auto)
+        {
+            var openedAsPs3 = await OpenPlayStationImagePathAsync(
+                imagePath,
+                keyPath ?? string.Empty,
+                ConsoleDriveImageKind.PlayStation3Hdd,
+                showError: false);
+            if (openedAsPs3)
+            {
+                return;
+            }
+
+            var openedAsPs4 = await OpenPlayStationImagePathAsync(
+                imagePath,
+                keyPath ?? string.Empty,
+                ConsoleDriveImageKind.PlayStation4Hdd,
+                showError: false);
+            if (openedAsPs4)
+            {
+                return;
+            }
+
+            const string supportUrl = "https://github.com/rain0x06/DriveAssistant/issues";
+            StatusText = $"Auto detect could not open this image. Submit a support request on GitHub: {supportUrl}";
+            AppendLog($"Auto detect failed to open image: {imagePath}");
+            MessageBox.Show(
+                this,
+                "Auto detect tried all supported filesystem handlers but could not open this image.\n\n" +
+                $"Please submit a support request with sample details on GitHub:\n{supportUrl}",
+                AppName,
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
         }
 
         if (IsPlayStationImageKind(imageKind))
@@ -785,14 +837,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var chooser = new ConsoleImageOpenWindow(imagePath, ConsoleDriveImageKind.PlayStation4Hdd)
-        {
-            Owner = this
-        };
-        if (chooser.ShowDialog() == true)
-        {
-            await OpenConsoleImagePathAsync(chooser.ImagePath, chooser.ImageKind, chooser.KeyPath);
-        }
+        StatusText = "Selected filesystem type could not open this image. Try another filesystem type.";
     }
 
     private async Task<bool> OpenFatxImagePathAsync(string imagePath)
@@ -1235,7 +1280,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         showError: false);
     }
 
-    private async Task<bool> OpenPlayStationImagePathAsync(string imagePath, string keyPath, ConsoleDriveImageKind imageKind)
+    private async Task<bool> OpenPlayStationImagePathAsync(
+        string imagePath,
+        string keyPath,
+        ConsoleDriveImageKind imageKind,
+        bool showError = true)
     {
         if (!string.IsNullOrWhiteSpace(keyPath) && !File.Exists(keyPath))
         {
@@ -1316,7 +1365,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AppendLog($"Opened {platformName} HDD image: {result.fileName}");
             AppendLog($"Detected {platformName} partitions: {Partitions.Count}");
         },
-        showError: true);
+        showError: showError);
     }
 
     private static bool IsPlayStationImageKind(ConsoleDriveImageKind imageKind)
@@ -2323,6 +2372,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             NavigateForwardDirectory();
             e.Handled = true;
         }
+
+        var focusedTextBox = FindVisualParent<TextBox>(e.OriginalSource as DependencyObject);
+        if (SearchBox.IsKeyboardFocused && focusedTextBox != SearchBox)
+        {
+            Keyboard.ClearFocus();
+            UpdateSearchPlaceholderVisibility();
+        }
     }
 
     private void ToggleWindowMaximized()
@@ -2844,25 +2900,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void About_Click(object sender, RoutedEventArgs e)
-    {
-        MessageBox.Show(
-            this,
-            "Drive Assistant is a read-only disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images.\n\n" +
-            "Current focus: practical browsing, metadata recovery, file carving, and safe export workflows for general filesystems plus Xbox, PlayStation, and Nintendo storage.\n\n" +
-            "Long-term goal: support most Nintendo console drives, all PlayStation and Xbox console HDDs/SSDs where technically practical, and common PC disk images.\n\n" +
-            "Project: https://github.com/rain0x06/DriveAssistant\n" +
-            "Original FATXTools codebase: https://github.com/aerosoul94/FATXTools\n\n" +
-            $"Version: {BuildInfo.Version}\n" +
-            $"Commit: {BuildInfo.CommitHash}\n" +
-            $"Build date: {BuildInfo.BuildDate:yyyy-MM-dd HH:mm:ss}\n",
-            $"About {AppName}",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-    }
+    private void About_Click(object sender, RoutedEventArgs e) 
+    { 
+        var aboutWindow = new AboutWindow
+        {
+            Owner = this
+        };
+        aboutWindow.ShowDialog();
+    } 
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            Keyboard.ClearFocus();
+            UpdateSearchPlaceholderVisibility();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Enter)
         {
             SearchCurrentResults();
@@ -2872,7 +2928,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        SearchPlaceholder.Visibility = string.IsNullOrWhiteSpace(SearchBox.Text)
+        UpdateSearchPlaceholderVisibility();
+    }
+
+    private void SearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        UpdateSearchPlaceholderVisibility();
+    }
+
+    private void SearchBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        UpdateSearchPlaceholderVisibility();
+    }
+
+    private void UpdateSearchPlaceholderVisibility()
+    {
+        SearchPlaceholder.Visibility = string.IsNullOrWhiteSpace(SearchBox.Text) && !SearchBox.IsKeyboardFocused
             ? Visibility.Visible
             : Visibility.Collapsed;
     }

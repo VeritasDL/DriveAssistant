@@ -112,15 +112,16 @@
           <Button Content="Tools" Height="30" MinWidth="58" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
             <Button.Flyout>
               <MenuFlyout>
-                <MenuItem Header="Add Custom Partition...    Ctrl+Shift+A" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
+                <MenuItem Header="Add Custom Partition    Ctrl+Shift+A" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
                 <MenuItem Header="Unmount Partition          Ctrl+U" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}" />
-                <MenuItem Header="Settings...                Ctrl+," Click="Settings_Click" />
               </MenuFlyout>
             </Button.Flyout>
           </Button>
           <Button Content="Help" Height="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click" PointerEntered="MenuButton_PointerEntered">
             <Button.Flyout>
               <MenuFlyout>
+                <MenuItem Header="Settings                Ctrl+," Click="Settings_Click" />
+                <Separator />
                 <MenuItem Header="About Drive Assistant    F1" Click="About_Click" />
               </MenuFlyout>
             </Button.Flyout>

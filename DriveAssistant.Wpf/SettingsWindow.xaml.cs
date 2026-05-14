@@ -13,6 +13,8 @@ namespace FATXTools.Wpf;
 
 public partial class SettingsWindow : Window
 {
+    private static readonly BoolOption[] BoolOptions = [new(true), new(false)];
+
     private static readonly IntervalOption[] IntervalOptions =
     [
         new("Byte", "0x1", FileCarverInterval.Byte),
@@ -52,11 +54,14 @@ public partial class SettingsWindow : Window
             ?? _workerOptions[0];
         ThemeCombo.ItemsSource = _themeOptions;
         ThemeCombo.SelectedItem = _themeOptions.First(option => option.Name == WpfTheme.NormalizeName(_settings.Theme));
-        ZeroFillOverwrittenRecoveryClustersCheckBox.IsChecked = _settings.ZeroFillOverwrittenRecoveryClusters;
-        EnableFileLoggingCheckBox.IsChecked = _settings.EnableFileLogging;
+        ZeroFillOverwrittenRecoveryClustersCombo.ItemsSource = BoolOptions;
+        ZeroFillOverwrittenRecoveryClustersCombo.SelectedItem = BoolOptions.First(option => option.Value == _settings.ZeroFillOverwrittenRecoveryClusters);
+        EnableFileLoggingCombo.ItemsSource = BoolOptions;
+        EnableFileLoggingCombo.SelectedItem = BoolOptions.First(option => option.Value == _settings.EnableFileLogging);
         LogFileTextBox.Text = _settings.LogFile;
         CustomCarversTextBox.Text = AppSettings.NormalizeCustomCarversFile(_settings.CustomCarversFile);
         ResetShortcutRows(ShortcutCatalog.Normalize(_settings.Shortcuts));
+        ApplyWindowStatePadding();
     }
 
     public AppSettings Result => _settings;
@@ -113,8 +118,12 @@ public partial class SettingsWindow : Window
         _settings.Theme = ThemeCombo.SelectedItem is ThemeOption themeOption
             ? WpfTheme.NormalizeName(themeOption.Name)
             : WpfTheme.Dark;
-        _settings.ZeroFillOverwrittenRecoveryClusters = ZeroFillOverwrittenRecoveryClustersCheckBox.IsChecked == true;
-        _settings.EnableFileLogging = EnableFileLoggingCheckBox.IsChecked == true;
+        _settings.ZeroFillOverwrittenRecoveryClusters = ZeroFillOverwrittenRecoveryClustersCombo.SelectedItem is BoolOption zeroFillOption
+            ? zeroFillOption.Value
+            : _settings.ZeroFillOverwrittenRecoveryClusters;
+        _settings.EnableFileLogging = EnableFileLoggingCombo.SelectedItem is BoolOption loggingOption
+            ? loggingOption.Value
+            : _settings.EnableFileLogging;
         _settings.LogFile = LogFileTextBox.Text.Trim();
         _settings.CustomCarversFile = AppSettings.NormalizeCustomCarversFile(CustomCarversTextBox.Text);
         if (!TrySaveShortcuts())
@@ -170,6 +179,23 @@ public partial class SettingsWindow : Window
         catch (NotSupportedException)
         {
             e.Handled = true;
+        }
+    }
+
+    private void ShortcutTextBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is TextBox textBox)
+        {
+            textBox.Dispatcher.BeginInvoke(new Action(textBox.SelectAll), System.Windows.Threading.DispatcherPriority.Input);
+        }
+    }
+
+    private void ShortcutTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is TextBox textBox && !textBox.IsKeyboardFocusWithin)
+        {
+            e.Handled = true;
+            textBox.Focus();
         }
     }
 
@@ -260,6 +286,18 @@ public partial class SettingsWindow : Window
     {
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     }
+
+    private void Window_StateChanged(object? sender, EventArgs e)
+    {
+        ApplyWindowStatePadding();
+    }
+
+    private void ApplyWindowStatePadding()
+    {
+        RootShell.Margin = WindowState == WindowState.Maximized
+            ? new Thickness(6)
+            : new Thickness(0);
+    }
 }
 
 public sealed record IntervalOption(string Name, string SizeText, FileCarverInterval Value)
@@ -297,6 +335,14 @@ public sealed record ThemeOption(string Name)
     public override string ToString()
     {
         return Name;
+    }
+}
+
+public sealed record BoolOption(bool Value)
+{
+    public override string ToString()
+    {
+        return Value ? "True" : "False";
     }
 }
 

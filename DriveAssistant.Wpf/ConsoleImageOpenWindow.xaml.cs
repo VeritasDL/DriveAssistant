@@ -5,15 +5,13 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 
 namespace FATXTools.Wpf;
 
 public partial class ConsoleImageOpenWindow : Window
 {
-    private const string SwitchKeyStatus =
-        "Switch encrypted BIS partitions need a plain text key file. Include BIS KEY 0-3 crypt/tweak pairs, or prod.keys names like bis_key_03_crypt and bis_key_03_tweak. Hover the key field for an example.";
-
     private const string SwitchKeyHelp =
         "Switch key file example:\n" +
         "BIS KEY 0 (crypt): 00112233445566778899AABBCCDDEEFF\n" +
@@ -31,23 +29,28 @@ public partial class ConsoleImageOpenWindow : Window
 
     private readonly IReadOnlyList<ConsoleImageKindOption> _options =
     [
-        new("Auto detect", ConsoleDriveImageKind.Auto, false),
-        new("Xbox / Xbox 360 FATX", ConsoleDriveImageKind.XboxFatx, false),
-        new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false),
-        new("Nintendo Switch NAND / eMMC", ConsoleDriveImageKind.NintendoSwitchNand, false),
-        new("Nintendo Wii / Wii U / DS / 3DS", ConsoleDriveImageKind.NintendoWiiWiiU, false),
-        new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false),
-        new("Legacy devkit / ROM / save media", ConsoleDriveImageKind.LegacyDevkitMedia, false),
-        new("PlayStation 2 HDD", ConsoleDriveImageKind.PlayStation2Hdd, false),
-        new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, false),
-        new("PlayStation 4 / PlayStation 4 Pro HDD", ConsoleDriveImageKind.PlayStation4Hdd, false)
+        new("Auto detect", ConsoleDriveImageKind.Auto, false, string.Empty),
+        new("Original Xbox FATX", ConsoleDriveImageKind.XboxOriginalFatx, false, string.Empty),
+        new("Xbox 360 FATX", ConsoleDriveImageKind.Xbox360Fatx, false, string.Empty),
+        new("Xbox One / Xbox Series GPT + NTFS", ConsoleDriveImageKind.XboxGptNtfs, false, string.Empty),
+        new("Nintendo Switch NAND / eMMC", ConsoleDriveImageKind.NintendoSwitchNand, true, string.Empty),
+        new("Nintendo Wii / GameCube", ConsoleDriveImageKind.NintendoWiiGameCube, false, string.Empty),
+        new("Nintendo Wii U storage", ConsoleDriveImageKind.NintendoWiiUStorage, true, string.Empty),
+        new("Nintendo DS / DSi / 3DS", ConsoleDriveImageKind.NintendoDs3ds, false, string.Empty),
+        new("Generic NTFS / FAT32 / exFAT", ConsoleDriveImageKind.GenericFileSystem, false, string.Empty),
+        new("Classic console + devkit media", ConsoleDriveImageKind.LegacyDevkitMedia, false, "PS1 save blocks and CD data tracks, PS2 memory-card images, PSP UMD ISO/CSO/PBP, PS Vita VPK, Dreamcast GDI/CIM/flash/VMU, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and Saturn system areas."),
+        new("PlayStation 1 media / memory card", ConsoleDriveImageKind.PlayStation1Media, false, string.Empty),
+        new("PlayStation 2 HDD", ConsoleDriveImageKind.PlayStation2Hdd, false, string.Empty),
+        new("PlayStation 3 HDD", ConsoleDriveImageKind.PlayStation3Hdd, true, string.Empty),
+        new("PlayStation 4 / PlayStation 4 Pro HDD", ConsoleDriveImageKind.PlayStation4Hdd, true, string.Empty)
     ];
+    private TextBox? _filesystemTypeTextBox;
+    private bool _suppressFilesystemFilterRefresh;
 
     public ConsoleImageOpenWindow(string? imagePath = null, ConsoleDriveImageKind initialKind = ConsoleDriveImageKind.Auto)
     {
         InitializeComponent();
-        ImageKindComboBox.ItemsSource = _options;
-        ImageKindComboBox.SelectedItem = _options.FirstOrDefault(option => option.Kind == initialKind) ?? _options[0];
+        RefreshImageKindOptions(initialKind);
         if (!string.IsNullOrWhiteSpace(imagePath))
         {
             ImagePathTextBox.Text = imagePath;
@@ -96,6 +99,7 @@ public partial class ConsoleImageOpenWindow : Window
     private void ImageKindComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateKeyVisibility();
+        UpdateFilesystemTypeHint();
         UpdateStatus();
     }
 
@@ -108,13 +112,13 @@ public partial class ConsoleImageOpenWindow : Window
     {
         if (!File.Exists(ImagePath))
         {
-            StatusTextBlock.Text = "Select an existing disk image.";
+            SetStatus("Select an existing disk image.");
             return;
         }
 
         if (!string.IsNullOrWhiteSpace(KeyPath) && !File.Exists(KeyPath) && !Directory.Exists(KeyPath))
         {
-            StatusTextBlock.Text = "Selected key file does not exist.";
+            SetStatus("Selected key file does not exist.");
             return;
         }
 
@@ -184,36 +188,62 @@ public partial class ConsoleImageOpenWindow : Window
     {
         if (!string.IsNullOrWhiteSpace(ImagePath) && !File.Exists(ImagePath))
         {
-            StatusTextBlock.Text = "Image path does not exist.";
+            SetStatus("Image path does not exist.");
             return;
         }
 
-        if (RequiresKey(ImageKind))
+        if (!string.IsNullOrWhiteSpace(KeyPath) && !File.Exists(KeyPath) && !Directory.Exists(KeyPath))
         {
-            StatusTextBlock.Text = ImageKind switch
-            {
-                ConsoleDriveImageKind.PlayStation3Hdd => "PlayStation 3 uses the managed PS3 reader. Select an EID root key for encrypted HDDs, or leave blank for already-decrypted images.",
-                ConsoleDriveImageKind.NintendoSwitchNand => SwitchKeyStatus,
-                ConsoleDriveImageKind.NintendoWiiWiiU => "Wii U WFS/dev HDD support accepts otp.bin plus seeprom.bin. Wii support also accepts a folder or .tar.gz containing common-key, sd-key, sd-iv, and md5-blanker.",
-                _ => "PlayStation 4 keys are optional. Leave blank for already-decrypted PS4 images, or select the matching PS4 EAP HDD key for encrypted images."
-            };
+            SetStatus("Selected key file does not exist.");
             return;
         }
 
-        StatusTextBlock.Text = ImageKind switch
-        {
-            ConsoleDriveImageKind.Auto => "Auto detect tries FATX, Xbox GPT/NTFS, Switch NAND, Wii/Wii U/DS/3DS, PlayStation 2 APA, generic NTFS/FAT32/exFAT, and raw legacy/devkit media markers, then asks whether the image is PlayStation 3 or PlayStation 4 if needed.",
-            ConsoleDriveImageKind.NintendoSwitchNand => "Switch NAND support reads the GPT and mounts readable FAT32 BIS partitions when BIS keys are supplied.",
-            ConsoleDriveImageKind.NintendoWiiWiiU => "Nintendo support detects Wii RVT-H/NAND/disc/WBFS, GameCube FST discs, GameCube RVZ headers, Wii U WFS/dev storage, Nintendo DS NitroFS ROMs, DSi NAND layouts, and 3DS NCSD/NCCH containers for read-only inspection and carving.",
-            ConsoleDriveImageKind.PlayStation2Hdd => "PlayStation 2 support detects APA/PFS and HDLoader partitions for read-only inspection and carving.",
-            ConsoleDriveImageKind.LegacyDevkitMedia => "Legacy support recognizes PS1 save blocks and CD data tracks, PS2 memory-card images, PSP UMD ISO/CSO/PBP media, PS Vita VPK packages, Dreamcast Katana GDI/CIM/flash/VMU media, Nintendo 64 ROM/save media, Game Boy-family ROM/save media, and Saturn system areas for read-only export and carving.",
-            _ => "This image type does not require a key file."
-        };
+        SetStatus(string.Empty);
     }
 
     private static bool RequiresKey(ConsoleDriveImageKind kind)
     {
-        return kind is ConsoleDriveImageKind.PlayStation3Hdd or ConsoleDriveImageKind.PlayStation4Hdd or ConsoleDriveImageKind.NintendoSwitchNand or ConsoleDriveImageKind.NintendoWiiWiiU;
+        return kind is ConsoleDriveImageKind.PlayStation3Hdd
+            or ConsoleDriveImageKind.PlayStation4Hdd
+            or ConsoleDriveImageKind.NintendoSwitchNand
+            or ConsoleDriveImageKind.NintendoWiiUStorage;
+    }
+
+    private void RefreshImageKindOptions(ConsoleDriveImageKind? preferred = null)
+    {
+        var previousKind = preferred
+            ?? (ImageKindComboBox.SelectedItem as ConsoleImageKindOption)?.Kind
+            ?? ConsoleDriveImageKind.Auto;
+        var filterText = _filesystemTypeTextBox?.Text?.Trim() ?? string.Empty;
+        var rows = _options
+            .OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(option => string.IsNullOrWhiteSpace(filterText)
+                             || option.Name.Contains(filterText, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            rows = _options.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        _suppressFilesystemFilterRefresh = true;
+        ImageKindComboBox.ItemsSource = rows;
+        ImageKindComboBox.SelectedItem = rows.FirstOrDefault(option => option.Kind == previousKind) ?? rows[0];
+        _suppressFilesystemFilterRefresh = false;
+        UpdateFilesystemTypeHint();
+    }
+
+    private void UpdateFilesystemTypeHint()
+    {
+        const string typingHint = "Type in this box to filter filesystem types. Press Down Arrow to open the full list.";
+        if (ImageKindComboBox.SelectedItem is ConsoleImageKindOption legacyOption &&
+            legacyOption.Kind == ConsoleDriveImageKind.LegacyDevkitMedia &&
+            !string.IsNullOrWhiteSpace(legacyOption.HelpText))
+        {
+            ImageKindComboBox.ToolTip = CreateWrappedToolTip($"{typingHint}\n\n{legacyOption.HelpText}");
+            return;
+        }
+
+        ImageKindComboBox.ToolTip = CreateWrappedToolTip(typingHint);
     }
 
     private static ToolTip CreateWrappedToolTip(string text)
@@ -230,23 +260,67 @@ public partial class ConsoleImageOpenWindow : Window
             }
         };
     }
+
+    private void SetStatus(string text)
+    {
+        StatusTextBlock.Text = text;
+        StatusTextBlock.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ImageKindComboBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_filesystemTypeTextBox != null)
+        {
+            return;
+        }
+
+        _filesystemTypeTextBox = ImageKindComboBox.Template.FindName("PART_EditableTextBox", ImageKindComboBox) as TextBox;
+        if (_filesystemTypeTextBox == null)
+        {
+            return;
+        }
+
+        _filesystemTypeTextBox.TextChanged += FilesystemTypeTextBox_TextChanged;
+        _filesystemTypeTextBox.GotKeyboardFocus += (_, _) => ImageKindComboBox.IsDropDownOpen = true;
+        _filesystemTypeTextBox.ToolTip = CreateWrappedToolTip("Type here to filter filesystem types (for example: pla, xbox, nintendo).");
+    }
+
+    private void FilesystemTypeTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressFilesystemFilterRefresh)
+        {
+            return;
+        }
+
+        var currentKind = ImageKind;
+        RefreshImageKindOptions(currentKind);
+        ImageKindComboBox.IsDropDownOpen = true;
+    }
 }
 
 public enum ConsoleDriveImageKind
 {
     Auto,
-    XboxFatx,
+    XboxOriginalFatx,
+    Xbox360Fatx,
     XboxGptNtfs,
     NintendoSwitchNand,
-    NintendoWiiWiiU,
+    NintendoWiiGameCube,
+    NintendoWiiUStorage,
+    NintendoDs3ds,
     GenericFileSystem,
+    PlayStation1Media,
     PlayStation2Hdd,
     PlayStation3Hdd,
     PlayStation4Hdd,
     LegacyDevkitMedia
 }
 
-public sealed record ConsoleImageKindOption(string Name, ConsoleDriveImageKind Kind, bool RequiresKey)
+public sealed record ConsoleImageKindOption(
+    string Name,
+    ConsoleDriveImageKind Kind,
+    bool RequiresKey,
+    string HelpText)
 {
     public override string ToString()
     {

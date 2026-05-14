@@ -57,8 +57,10 @@
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
-                <Button Grid.Column="1"
-                        Content="&#xE921;"
+                <Button Grid.Column="1" 
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
+                        Content="&#xE921;" 
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
@@ -69,8 +71,10 @@
                         ToolTip="Minimize"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
                         Click="MinimizeWindow_Click" />
-                <Button Grid.Column="2"
-                        Content="&#xE922;"
+                <Button Grid.Column="2" 
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
+                        Content="&#xE922;" 
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
@@ -81,8 +85,10 @@
                         ToolTip="Maximize"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
                         Click="MaximizeRestoreWindow_Click" />
-                <Button Grid.Column="3"
-                        Content="&#xE8BB;"
+                <Button Grid.Column="3" 
+                        FocusVisualStyle="{x:Null}"
+                        Focusable="False"
+                        Content="&#xE8BB;" 
                         FontFamily="Segoe MDL2 Assets"
                         FontSize="10"
                         Foreground="{DynamicResource TitleBarTextBrush}"
@@ -113,14 +119,18 @@
                     <Button Content="File" Height="30" MinHeight="30" MinWidth="54" Padding="12,0" Click="MenuButton_Click">
                         <Button.ContextMenu>
                             <ContextMenu>
-                                <MenuItem x:Name="OpenImageMenuItem" Header="Open Image..." Click="OpenImage_Click" />
-                                <MenuItem x:Name="LoadDatabaseMenuItem" Header="Load Database..." Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
-                                <MenuItem x:Name="SaveDatabaseMenuItem" Header="Save Database..." Click="SaveDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
-                                <Separator />
-                                <MenuItem Header="Rebuild FATX Image (Include Deleted)..." Click="RebuildFatxImageIncludeDeleted_Click" />
-                                <MenuItem Header="Rebuild FATX Image (Exclude Deleted)..." Click="RebuildFatxImageExcludeDeleted_Click" />
-                                <Separator />
-                                <MenuItem x:Name="SaveSelectedMenuItem" Header="Save Selected..." Click="SaveSelected_Click" IsEnabled="{Binding HasSelection}" />
+                                <MenuItem x:Name="OpenImageMenuItem" Header="Open Image" Click="OpenImage_Click" /> 
+                                <MenuItem x:Name="LoadDatabaseMenuItem" Header="Load Database" Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" /> 
+                                <MenuItem x:Name="SaveDatabaseMenuItem" Header="Save Database" Click="SaveDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" /> 
+                                <Separator /> 
+                                <MenuItem Header="Rebuild FATX Image (Include Deleted)"
+                                          ToolTip="Rebuilds a FATX image while preserving deleted entries where recoverable."
+                                          Click="RebuildFatxImageIncludeDeleted_Click" /> 
+                                <MenuItem Header="Rebuild FATX Image (Exclude Deleted)"
+                                          ToolTip="Rebuilds a FATX image with deleted entries omitted from the output."
+                                          Click="RebuildFatxImageExcludeDeleted_Click" /> 
+                                <Separator /> 
+                                <MenuItem x:Name="SaveSelectedMenuItem" Header="Save Selected" Click="SaveSelected_Click" IsEnabled="{Binding HasSelection}" /> 
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
@@ -147,16 +157,16 @@
                     <Button Content="Tools" Height="30" MinHeight="30" MinWidth="58" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
                         <Button.ContextMenu>
                             <ContextMenu>
-                                <MenuItem x:Name="AddPartitionMenuItem" Header="Add Custom Partition..." Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
+                                <MenuItem x:Name="AddPartitionMenuItem" Header="Add Custom Partition" Click="AddCustomPartition_Click" IsEnabled="{Binding CanAddCustomPartition}" />
                                 <MenuItem x:Name="UnmountPartitionMenuItem" Header="Unmount Partition" Click="UnmountPartition_Click" IsEnabled="{Binding CanUnmountPartition}" />
-                                <Separator />
-                                <MenuItem x:Name="SettingsMenuItem" Header="Settings..." Click="Settings_Click" />
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
                     <Button Content="Help" Height="30" MinHeight="30" MinWidth="54" Padding="12,0" Margin="4,0,0,0" Click="MenuButton_Click">
                         <Button.ContextMenu>
                             <ContextMenu>
+                                <MenuItem x:Name="SettingsMenuItem" Header="Settings" Click="Settings_Click" />
+                                <Separator />
                                 <MenuItem x:Name="AboutMenuItem" Header="About Drive Assistant" Click="About_Click" />
                             </ContextMenu>
                         </Button.ContextMenu>
@@ -326,16 +336,20 @@
                                        Grid.Column="1"
                                        Text="Search file results"
                                        Foreground="{DynamicResource DisabledTextBrush}"
+                                       Margin="0,0,8,0"
                                        VerticalAlignment="Center"
                                        IsHitTestVisible="False" />
                             <TextBox x:Name="SearchBox"
                                      Grid.Column="1"
                                      Background="Transparent"
-                                     BorderThickness="0"
-                                     Padding="0"
-                                     VerticalContentAlignment="Center"
-                                     TextChanged="SearchBox_TextChanged"
-                                     KeyDown="SearchBox_KeyDown" />
+                                     BorderThickness="0" 
+                                     Padding="0,0,8,0" 
+                                     VerticalContentAlignment="Center" 
+                                     PreviewGotKeyboardFocus="SearchBox_GotKeyboardFocus"
+                                     GotKeyboardFocus="SearchBox_GotKeyboardFocus" 
+                                     LostKeyboardFocus="SearchBox_LostKeyboardFocus" 
+                                     TextChanged="SearchBox_TextChanged" 
+                                     KeyDown="SearchBox_KeyDown" /> 
                         </Grid>
                     </Border>
                     <Button Grid.Column="1"
@@ -523,24 +537,13 @@
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center" />
                                         </Border>
-                                        <Grid Grid.Column="1" VerticalAlignment="Center">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <TextBlock Text="{Binding CurrentFileSystemTitle}"
-                                                       Style="{StaticResource SectionLabel}"
-                                                       Foreground="{DynamicResource SectionTextBrush}" />
-                                            <TextBlock Text="{Binding CurrentDirectorySummary}"
-                                                       Grid.Row="1"
-                                                       Foreground="{DynamicResource MutedBrush}"
-                                                       FontSize="12"
-                                                       Margin="0,3,0,0"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       ToolTip="{Binding CurrentDirectorySummary}" />
-                                        </Grid>
-                                    </Grid>
-                                </Border>
+                                        <Grid Grid.Column="1" VerticalAlignment="Center"> 
+                                            <TextBlock Text="{Binding CurrentFileSystemTitle}" 
+                                                       Style="{StaticResource SectionLabel}" 
+                                                       Foreground="{DynamicResource SectionTextBrush}" /> 
+                                        </Grid> 
+                                    </Grid> 
+                                </Border> 
                                 <TreeView x:Name="DirectoryTree"
                                           Grid.Row="1"
                                           BorderThickness="0"
