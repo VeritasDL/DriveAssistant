@@ -258,6 +258,7 @@ public sealed partial class MainWindow : Window
                 {
                     CancellationToken = rebuildCancellation.Token,
                     IsPaused = () => Volatile.Read(ref pauseFlag) == 1,
+                    PayloadWorkerCount = Math.Max(1, Environment.ProcessorCount - 1),
                     Progress = snapshot =>
                     {
                         Dispatcher.UIThread.Post(() =>

@@ -646,6 +646,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     CancellationToken = rebuildCancellation.Token,
                     IsPaused = () => Volatile.Read(ref pauseFlag) == 1,
+                    PayloadWorkerCount = Math.Max(1, _settings.MetadataParallelWorkers),
                     Progress = snapshot =>
                     {
                         Dispatcher.Invoke(() =>

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.IO;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 using System.Text.Json;
 using FATX.FileSystem;
@@ -209,11 +210,33 @@ internal static class FatxImageRebuildCommand
             ReportProgress(execution, "Write directories", completedStages, totalStages, directory.RelativePath);
         }
 
-        foreach (var file in allFiles)
+        var payloadWorkers = execution.PayloadWorkerCount > 0
+            ? execution.PayloadWorkerCount
+            : Math.Max(1, Environment.ProcessorCount - 1);
+        if (payloadWorkers <= 1 || allFiles.Count <= 1)
         {
-            WriteFilePayload(stream, layout, file, execution);
-            completedStages++;
-            ReportProgress(execution, "Write payloads", completedStages, totalStages, file.RelativePath);
+            foreach (var file in allFiles)
+            {
+                WriteFilePayload(stream.SafeFileHandle, layout, file, execution);
+                completedStages++;
+                ReportProgress(execution, "Write payloads", completedStages, totalStages, file.RelativePath);
+            }
+        }
+        else
+        {
+            var parallelOptions = new ParallelOptions
+            {
+                CancellationToken = execution.CancellationToken,
+                MaxDegreeOfParallelism = payloadWorkers
+            };
+
+            Parallel.ForEach(allFiles, parallelOptions, file =>
+            {
+                ObserveExecution(execution);
+                WriteFilePayload(stream.SafeFileHandle, layout, file, execution);
+                var current = Interlocked.Increment(ref completedStages);
+                ReportProgress(execution, "Write payloads", current, totalStages, file.RelativePath);
+            });
         }
 
         var totalDirs = allDirectories.Count + 1; // include root directory stream
@@ -574,7 +597,7 @@ internal static class FatxImageRebuildCommand
         return (uint)((year << 25) | (value.Month << 21) | (value.Day << 16) | (value.Hour << 11) | (value.Minute << 5) | second);
     }
 
-    private static void WriteFilePayload(FileStream stream, FatxLayout layout, RebuildNode file, RebuildExecutionOptions execution)
+    private static void WriteFilePayload(SafeFileHandle outputHandle, FatxLayout layout, RebuildNode file, RebuildExecutionOptions execution)
     {
         ObserveExecution(execution);
         if (file.Clusters.Count == 0 || string.IsNullOrWhiteSpace(file.SourcePath) || !File.Exists(file.SourcePath))
@@ -613,8 +636,8 @@ internal static class FatxImageRebuildCommand
                 offset += read;
             }
 
-            stream.Position = layout.ClusterToPhysicalOffset(cluster);
-            stream.Write(buffer, 0, buffer.Length);
+            var destinationOffset = layout.ClusterToPhysicalOffset(cluster);
+            RandomAccess.Write(outputHandle, buffer.AsSpan(0, buffer.Length), destinationOffset);
             remaining -= bytesToCopy;
         }
     }
@@ -1612,6 +1635,8 @@ public sealed class RebuildExecutionOptions
     public Func<bool>? IsPaused { get; init; }
 
     public Action<RebuildProgressSnapshot>? Progress { get; init; }
+
+    public int PayloadWorkerCount { get; init; }
 }
 
 internal sealed class RebuildSnapshot
