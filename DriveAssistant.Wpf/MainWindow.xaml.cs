@@ -4167,7 +4167,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 foreach (var row in rows)
                 {
                     state.ThrowIfCancellationRequested();
-                    WriteRecoveryFileToDirectory(row, destination, state);
+                    WriteRecoveryFileToDirectory(row, destination, _settings.ZeroFillOverwrittenRecoveryClusters, state);
                 }
             },
             $"Saved {rows.Count:N0} recovered item(s) to: {destination}",
@@ -4191,7 +4191,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             $"Save recovered file {row.Name}",
             Math.Max(0, row.SizeBytes),
             1,
-            state => WriteRecoveryFile(row, dialog.FileName, state),
+            state => WriteRecoveryFile(row, dialog.FileName, _settings.ZeroFillOverwrittenRecoveryClusters, state),
             $"Saved recovered file: {dialog.FileName}",
             dialog.FileName);
     }
@@ -4900,28 +4900,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static void WriteRecoveryFileToDirectory(RecoveryFileRow row, string destinationDirectory)
     {
-        WriteRecoveryFileToDirectory(row, destinationDirectory, null);
+        WriteRecoveryFileToDirectory(row, destinationDirectory, zeroFillOverwrittenClusters: false, null);
     }
 
-    private static void WriteRecoveryFileToDirectory(RecoveryFileRow row, string destinationDirectory, ExportProgressState? progress)
+    private static void WriteRecoveryFileToDirectory(RecoveryFileRow row, string destinationDirectory, bool zeroFillOverwrittenClusters, ExportProgressState? progress)
     {
         if (row.IsFolder)
         {
             var targetDirectory = GetUniqueDirectoryPath(Path.Combine(destinationDirectory, SanitizeFileName(row.Name)));
-            WriteRecoveryDirectory(row.Volume, row.File, targetDirectory, progress);
+            WriteRecoveryDirectory(row.Volume, row.File, targetDirectory, zeroFillOverwrittenClusters, progress);
             return;
         }
 
         var targetFile = GetUniqueFilePath(Path.Combine(destinationDirectory, SanitizeFileName(row.Name)));
-        WriteRecoveryFile(row, targetFile, progress);
+        WriteRecoveryFile(row, targetFile, zeroFillOverwrittenClusters, progress);
     }
 
     private static void WriteRecoveryDirectory(Volume volume, DatabaseFile directory, string targetDirectory)
     {
-        WriteRecoveryDirectory(volume, directory, targetDirectory, null);
+        WriteRecoveryDirectory(volume, directory, targetDirectory, zeroFillOverwrittenClusters: false, null);
     }
 
-    private static void WriteRecoveryDirectory(Volume volume, DatabaseFile directory, string targetDirectory, ExportProgressState? progress)
+    private static void WriteRecoveryDirectory(Volume volume, DatabaseFile directory, string targetDirectory, bool zeroFillOverwrittenClusters, ExportProgressState? progress)
     {
         Directory.CreateDirectory(targetDirectory);
         foreach (var child in directory.Children)
@@ -4930,31 +4930,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (child.IsDirectory())
             {
                 var childDirectory = GetUniqueDirectoryPath(Path.Combine(targetDirectory, SanitizeFileName(child.FileName)));
-                WriteRecoveryDirectory(volume, child, childDirectory, progress);
+                WriteRecoveryDirectory(volume, child, childDirectory, zeroFillOverwrittenClusters, progress);
                 continue;
             }
 
             var childFile = GetUniqueFilePath(Path.Combine(targetDirectory, SanitizeFileName(child.FileName)));
-            WriteRecoveryFile(volume, child, childFile, progress);
+            WriteRecoveryFile(volume, child, childFile, zeroFillOverwrittenClusters, progress);
         }
     }
 
     private static void WriteRecoveryFile(RecoveryFileRow row, string path)
     {
-        WriteRecoveryFile(row, path, null);
+        WriteRecoveryFile(row, path, zeroFillOverwrittenClusters: false, null);
     }
 
-    private static void WriteRecoveryFile(RecoveryFileRow row, string path, ExportProgressState? progress)
+    private static void WriteRecoveryFile(RecoveryFileRow row, string path, bool zeroFillOverwrittenClusters, ExportProgressState? progress)
     {
-        WriteRecoveryFile(row.Volume, row.File, path, progress);
+        WriteRecoveryFile(row.Volume, row.File, path, zeroFillOverwrittenClusters, progress);
     }
 
     private static void WriteRecoveryFile(Volume volume, DatabaseFile file, string path)
     {
-        WriteRecoveryFile(volume, file, path, null);
+        WriteRecoveryFile(volume, file, path, zeroFillOverwrittenClusters: false, null);
     }
 
-    private static void WriteRecoveryFile(Volume volume, DatabaseFile file, string path, ExportProgressState? progress)
+    private static void WriteRecoveryFile(Volume volume, DatabaseFile file, string path, bool zeroFillOverwrittenClusters, ExportProgressState? progress)
     {
         if (file.IsDirectory())
         {
@@ -4968,7 +4968,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         progress?.StartItem(file.FileName);
-        WriteClustersToFile(volume, clusters, file.FileSize, path, progress);
+        IReadOnlyCollection<uint>? overwritten = null;
+        if (zeroFillOverwrittenClusters)
+        {
+            overwritten = file.GetCollisions();
+        }
+
+        WriteClustersToFile(volume, clusters, file.FileSize, path, overwritten, progress);
         progress?.CompleteItem();
     }
 
@@ -5106,14 +5112,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static void WriteClustersToFile(Volume volume, IReadOnlyList<uint> clusters, long fileSize, string path)
     {
-        WriteClustersToFile(volume, clusters, fileSize, path, null);
+        WriteClustersToFile(volume, clusters, fileSize, path, null, null);
     }
 
     private static void WriteClustersToFile(Volume volume, IReadOnlyList<uint> clusters, long fileSize, string path, ExportProgressState? progress)
     {
+        WriteClustersToFile(volume, clusters, fileSize, path, null, progress);
+    }
+
+    private static void WriteClustersToFile(
+        Volume volume,
+        IReadOnlyList<uint> clusters,
+        long fileSize,
+        string path,
+        IReadOnlyCollection<uint>? clustersToZeroFill,
+        ExportProgressState? progress)
+    {
         var remaining = fileSize;
         var bufferSize = (int)Math.Min(int.MaxValue, Math.Max(0x100000L, volume.BytesPerCluster));
         using var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, bufferSize, FileOptions.SequentialScan);
+        HashSet<uint>? zeroFillSet = null;
+        byte[]? zeroBuffer = null;
+        if (clustersToZeroFill is { Count: > 0 })
+        {
+            zeroFillSet = new HashSet<uint>(clustersToZeroFill);
+            zeroBuffer = new byte[Math.Max(1, (int)volume.BytesPerCluster)];
+        }
+
         foreach (var cluster in clusters)
         {
             progress?.ThrowIfCancellationRequested();
@@ -5122,13 +5147,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 break;
             }
 
+            var writeSize = (int)Math.Min(remaining, volume.BytesPerCluster);
+            if (zeroFillSet != null && zeroFillSet.Contains(cluster))
+            {
+                output.Write(zeroBuffer!, 0, writeSize);
+                remaining -= writeSize;
+                progress?.AddBytes(writeSize);
+                continue;
+            }
+
             if (cluster == 0 || cluster >= volume.MaxClusters)
             {
                 break;
             }
 
             var data = volume.ReadCluster(cluster);
-            var writeSize = (int)Math.Min(remaining, volume.BytesPerCluster);
             output.Write(data, 0, writeSize);
             remaining -= writeSize;
             progress?.AddBytes(writeSize);

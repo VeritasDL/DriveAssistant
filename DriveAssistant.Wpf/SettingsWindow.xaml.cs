@@ -52,6 +52,7 @@ public partial class SettingsWindow : Window
             ?? _workerOptions[0];
         ThemeCombo.ItemsSource = _themeOptions;
         ThemeCombo.SelectedItem = _themeOptions.First(option => option.Name == WpfTheme.NormalizeName(_settings.Theme));
+        ZeroFillOverwrittenRecoveryClustersCheckBox.IsChecked = _settings.ZeroFillOverwrittenRecoveryClusters;
         EnableFileLoggingCheckBox.IsChecked = _settings.EnableFileLogging;
         LogFileTextBox.Text = _settings.LogFile;
         CustomCarversTextBox.Text = AppSettings.NormalizeCustomCarversFile(_settings.CustomCarversFile);
@@ -112,6 +113,7 @@ public partial class SettingsWindow : Window
         _settings.Theme = ThemeCombo.SelectedItem is ThemeOption themeOption
             ? WpfTheme.NormalizeName(themeOption.Name)
             : WpfTheme.Dark;
+        _settings.ZeroFillOverwrittenRecoveryClusters = ZeroFillOverwrittenRecoveryClustersCheckBox.IsChecked == true;
         _settings.EnableFileLogging = EnableFileLoggingCheckBox.IsChecked == true;
         _settings.LogFile = LogFileTextBox.Text.Trim();
         _settings.CustomCarversFile = AppSettings.NormalizeCustomCarversFile(CustomCarversTextBox.Text);

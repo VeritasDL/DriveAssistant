@@ -26,6 +26,7 @@ internal static class Program
                 "info" => RunInfo(args[1..]),
                 "list" => RunList(args[1..]),
                 "export" => RunExport(args[1..]),
+                "rebuild-fatx" => FatxImageRebuildCommand.Run(args[1..]),
                 "version" => RunVersion(),
                 _ => Fail($"Unknown command '{args[0]}'. Run 'drive-assistant --help'.")
             };
@@ -286,14 +287,16 @@ Usage:
   drive-assistant info <image> [--key <path>]
   drive-assistant list <image> [--partition <index>] [--recursive] [--key <path>]
   drive-assistant export <image> <entry-path> <output-path> [--partition <index>] [--key <path>]
+  drive-assistant rebuild-fatx [<snapshot.json> <live-files-dir> <deleted-files-dir> <output.img>] [--partition <name-or-index>] [--serial <hex>] [--include-deleted <true|false>]
   drive-assistant version
 
 Examples:
   drive-assistant info ./disk.img
   drive-assistant list ./psp-nand.bin --partition 0 --recursive
   drive-assistant export ./disk.img /Content/save.bin ./save.bin --partition 1
+  drive-assistant rebuild-fatx ./db.json ./live ./deleted ./rebuilt.img --partition Partition1 --include-deleted false
 
-The CLI is read-only against source images. It supports the same managed parser code used by the desktop app where those parsers do not depend on WPF.
+`info`, `list`, and `export` are read-only against source images. `rebuild-fatx` creates a new image from snapshot metadata plus supplied source files.
 """);
     }
 }

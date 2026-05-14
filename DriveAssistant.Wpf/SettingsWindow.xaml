@@ -112,7 +112,7 @@
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="12" />
                         <RowDefinition Height="Auto" />
@@ -162,6 +162,9 @@
 
                     <TextBlock Grid.Row="4" Text="Metadata interval clusters" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
                     <TextBox x:Name="MetadataIntervalTextBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" />
+
+                    <TextBlock Grid.Row="5" Text="Recovered export: zero-fill overwritten clusters" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <CheckBox x:Name="ZeroFillOverwrittenRecoveryClustersCheckBox" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Left" />
 
                     <TextBlock Grid.Row="6" Text="Log to file" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
                     <CheckBox x:Name="EnableFileLoggingCheckBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Left" />

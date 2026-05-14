@@ -33,6 +33,8 @@ public sealed class AppSettings
 
     public int MetadataParallelWorkers { get; set; } = Math.Max(1, Environment.ProcessorCount - 1);
 
+    public bool ZeroFillOverwrittenRecoveryClusters { get; set; } = false;
+
     public string LogFile { get; set; } = "log.txt";
 
     public bool EnableFileLogging { get; set; } = true;
@@ -81,6 +83,7 @@ public sealed class AppSettings
             ScanProfile = ScanProfile,
             MetadataIntervalClusters = MetadataIntervalClusters,
             MetadataParallelWorkers = MetadataParallelWorkers,
+            ZeroFillOverwrittenRecoveryClusters = ZeroFillOverwrittenRecoveryClusters,
             LogFile = LogFile,
             EnableFileLogging = EnableFileLogging,
             CustomCarversFile = NormalizeCustomCarversFile(CustomCarversFile),
