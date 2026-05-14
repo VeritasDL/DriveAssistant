@@ -88,3 +88,11 @@
   - shortcut: `--no-deleted`
 - Default remains `include deleted = true` for compatibility with prior behavior.
 - Updated CLI help examples to show toggle usage.
+
+## Step 12: Auto Changelog In GitHub Releases
+- Updated `.github/workflows/release.yaml` release-note generation.
+- Release notes now include a `What Changed` section pulled from git history.
+- On tagged builds:
+  - Uses previous tag -> current tag range for commit bullets.
+  - Falls back to latest commits if no previous tag exists.
+- This ensures each new release automatically shows what changed without manual note editing.

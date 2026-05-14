@@ -129,10 +129,30 @@ jobs:
       - name: Write release notes
         shell: pwsh
         run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $previousTag = git tag --list 'v*' --sort=-version:refname |
+            Where-Object { $_ -ne $version } |
+            Select-Object -First 1
+
+          if (-not [string]::IsNullOrWhiteSpace($previousTag)) {
+            $changes = git log --pretty=format:'- %s (%h)' "$previousTag..$version"
+            $rangeLabel = "$previousTag -> $version"
+          } else {
+            $changes = git log --pretty=format:'- %s (%h)' -n 20
+            $rangeLabel = "latest commits"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($changes)) {
+            $changes = "- No commit summary available."
+          }
+
           @"
           Portable Windows x64 build of Drive Assistant.
 
           This release workflow also uploads Linux desktop and CLI tarballs for x64 and arm64 after the Windows package job completes.
+
+          ## What Changed ($rangeLabel)
+          $changes
 
           SHA256:
           ```${{ steps.package.outputs.sha256 }}```
