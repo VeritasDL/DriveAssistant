@@ -1006,6 +1006,9 @@
                                         <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" SortMemberPath="Kind" Width="96" MinWidth="80" CanUserResize="True" />
                                         <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="120" MinWidth="92" CanUserResize="True" />
                                         <DataGridTextColumn Header="Offset" Binding="{Binding OffsetText}" SortMemberPath="Offset" Width="160" MinWidth="135" CanUserResize="True" />
+                                        <DataGridTextColumn Header="Runs" Binding="{Binding FragmentRunText}" SortMemberPath="FragmentRunCount" Width="76" MinWidth="62" CanUserResize="True" />
+                                        <DataGridTextColumn Header="Fragmentation" Binding="{Binding FragmentationStatus}" SortMemberPath="FragmentationStatus" Width="240" MinWidth="160" CanUserResize="True" />
+                                        <DataGridTextColumn Header="Extents" Binding="{Binding ExtentSummary}" SortMemberPath="ExtentSummary" Width="240" MinWidth="160" CanUserResize="True" />
                                         <DataGridTextColumn Header="Source" Binding="{Binding Source}" SortMemberPath="Source" Width="180" MinWidth="130" CanUserResize="True" />
                                         <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" SortMemberPath="Detail" Width="320" MinWidth="180" CanUserResize="True" />
                                     </DataGrid.Columns>

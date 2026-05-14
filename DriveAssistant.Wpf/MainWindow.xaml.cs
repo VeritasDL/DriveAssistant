@@ -5598,7 +5598,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                         Size = row.SizeBytes,
                         PartitionName = partition.Name,
                         Source = row.GenericFile?.Source ?? row.Snapshot?.Source ?? string.Empty,
-                        Detail = row.GenericFile?.Detail ?? row.Snapshot?.Detail ?? string.Empty
+                        Detail = row.GenericFile?.Detail ?? row.Snapshot?.Detail ?? string.Empty,
+                        Fragmentation = row.GenericFile?.EffectiveFragmentationStatus ?? row.Snapshot?.Fragmentation ?? string.Empty,
+                        Extents = row.GenericFile?.EffectiveExtentSummary ?? row.Snapshot?.Extents ?? string.Empty
                     })
                     .ToList()
             }
@@ -5959,7 +5961,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                             Size = GetJsonInt64(entry, "Size"),
                             PartitionName = partition.Name,
                             Source = "Legacy FATXTools database",
-                            Detail = $"Imported legacy FATXTools file-carver row; legacy FATX file-area offset 0x{GetJsonInt64(entry, "Offset"):X}"
+                            Detail = $"Imported legacy FATXTools file-carver row; legacy FATX file-area offset 0x{GetJsonInt64(entry, "Offset"):X}",
+                            Fragmentation = "Legacy FATXTools carve row",
+                            Extents = string.Empty
                         })
                         .ToList();
                 }
@@ -6151,7 +6155,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.Offset,
                 snapshot.Size,
                 snapshot.Source,
-                snapshot.Detail));
+                snapshot.Detail,
+                Extents: ParseExtentText(snapshot.Extents, snapshot.Size),
+                FragmentationStatus: snapshot.Fragmentation,
+                ExtentSummary: snapshot.Extents));
         }
 
         return new CarvedFileRow(snapshot);
@@ -7289,6 +7296,23 @@ public sealed class CarvedFileSnapshot
     public string Source { get; set; } = string.Empty;
 
     public string Detail { get; set; } = string.Empty;
+
+    public string Fragmentation { get; set; } = string.Empty;
+
+    public string Extents { get; set; } = string.Empty;
+
+    public int FragmentRunCount
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Extents))
+            {
+                return 0;
+            }
+
+            return Extents.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        }
+    }
 }
 
 public sealed class SnapshotPartition
@@ -9178,6 +9202,22 @@ public sealed class CarvedFileRow
     public string Source => GenericFile?.Source ?? Snapshot?.Source ?? string.Empty;
 
     public string Detail => GenericFile?.Detail ?? Snapshot?.Detail ?? string.Empty;
+
+    public int FragmentRunCount => GenericFile?.FragmentRunCount
+        ?? Snapshot?.FragmentRunCount
+        ?? 0;
+
+    public string FragmentRunText => FragmentRunCount <= 0
+        ? string.Empty
+        : $"{FragmentRunCount:N0} {(FragmentRunCount == 1 ? "run" : "runs")}";
+
+    public string FragmentationStatus => GenericFile?.EffectiveFragmentationStatus
+        ?? Snapshot?.Fragmentation
+        ?? string.Empty;
+
+    public string ExtentSummary => GenericFile?.EffectiveExtentSummary
+        ?? Snapshot?.Extents
+        ?? string.Empty;
 
     public bool HasFileData => Signature != null && Volume != null || GenericFile?.HasFileData == true;
 }

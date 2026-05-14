@@ -16,9 +16,35 @@ public sealed record GenericCarvedFile(
     long DisplayOffset,
     long Size,
     string Source,
-    string Detail)
+    string Detail,
+    IReadOnlyList<FileExtent>? Extents = null,
+    string FragmentationStatus = "",
+    string ExtentSummary = "")
 {
     public bool HasFileData => Size > 0 && File.Exists(SourcePath);
+
+    public IReadOnlyList<FileExtent> EffectiveExtents => Extents is { Count: > 0 }
+        ? Extents
+        : Size > 0 ? [new FileExtent(SourceOffset, Size)] : [];
+
+    public int FragmentRunCount => EffectiveExtents.Count;
+
+    public string EffectiveFragmentationStatus => !string.IsNullOrWhiteSpace(FragmentationStatus)
+        ? FragmentationStatus
+        : FragmentRunCount <= 1
+            ? "Contiguous"
+            : $"Fragmented into {FragmentRunCount:N0} runs";
+
+    public string EffectiveExtentSummary => !string.IsNullOrWhiteSpace(ExtentSummary)
+        ? ExtentSummary
+        : BuildExtentSummary(EffectiveExtents);
+
+    private static string BuildExtentSummary(IReadOnlyList<FileExtent> extents)
+    {
+        return extents.Count == 0
+            ? string.Empty
+            : string.Join(", ", extents.Take(8).Select(extent => $"0x{extent.Offset:X}+0x{extent.Length:X}"));
+    }
 }
 
 public sealed record GenericCarverMatch(string Name, string Extension, long Size, string Detail);
@@ -128,15 +154,24 @@ public sealed class GenericFileCarver
 
                 if (match != null)
                 {
+                    var size = Math.Min(match.Size, readableLength - relative);
+                    if (size <= 0)
+                    {
+                        continue;
+                    }
+
                     var file = new GenericCarvedFile(
                         BuildFileName(relative, match),
                         match.Extension.TrimStart('.').ToUpperInvariant(),
                         _sourcePath,
                         absoluteOffset,
                         _displayBaseOffset + relative,
-                        Math.Min(match.Size, readableLength - relative),
+                        size,
                         _sourceName,
-                        match.Detail);
+                        match.Detail,
+                        Extents: [new FileExtent(absoluteOffset, size)],
+                        FragmentationStatus: "Contiguous",
+                        ExtentSummary: $"0x{absoluteOffset:X}+0x{size:X}");
                     rows.Add(file);
                     AddNestedContainerRows(rows, stream, file, match, cancellationToken);
                 }
@@ -152,6 +187,85 @@ public sealed class GenericFileCarver
         }
 
         progress?.Report((int)Math.Min(int.MaxValue, steps));
+        return ApplyNcaFragmentationHints(rows);
+    }
+
+    private static List<GenericCarvedFile> ApplyNcaFragmentationHints(List<GenericCarvedFile> rows)
+    {
+        if (rows.Count < 2)
+        {
+            return rows;
+        }
+
+        var ordered = rows
+            .Select((row, index) => (row, index))
+            .Where(tuple => tuple.row.Size > 0)
+            .OrderBy(tuple => tuple.row.SourceOffset)
+            .ToList();
+        if (ordered.Count < 2)
+        {
+            return rows;
+        }
+
+        var updates = new Dictionary<int, GenericCarvedFile>();
+        foreach (var candidate in ordered.Where(tuple => tuple.row.Kind.Equals("NCA", StringComparison.OrdinalIgnoreCase)))
+        {
+            var start = candidate.row.SourceOffset;
+            var end = checked(start + candidate.row.Size);
+            var overlap = ordered.FirstOrDefault(tuple =>
+                tuple.index != candidate.index
+                && string.Equals(tuple.row.SourcePath, candidate.row.SourcePath, StringComparison.OrdinalIgnoreCase)
+                && tuple.row.SourceOffset > start
+                && tuple.row.SourceOffset < end);
+            if (overlap == default)
+            {
+                continue;
+            }
+
+            var firstRunLength = overlap.row.SourceOffset - start;
+            if (firstRunLength <= 0)
+            {
+                continue;
+            }
+
+            var trailingOffset = overlap.row.SourceOffset + Math.Max(0, overlap.row.Size);
+            var trailingLength = Math.Max(0, end - trailingOffset);
+            var extents = new List<FileExtent> { new(start, firstRunLength) };
+            if (trailingLength > 0)
+            {
+                extents.Add(new FileExtent(trailingOffset, trailingLength));
+            }
+
+            var overlapEnd = Math.Min(end, overlap.row.SourceOffset + Math.Max(0, overlap.row.Size));
+            var overlapLength = Math.Max(0, overlapEnd - overlap.row.SourceOffset);
+            var overlapName = string.IsNullOrWhiteSpace(overlap.row.Name) ? overlap.row.Kind : overlap.row.Name;
+            var status = extents.Count == 1
+                ? $"Contiguous span with overlap candidate ({overlapName})"
+                : $"Likely fragmented or overwritten span ({extents.Count:N0} runs); overlap with {overlapName} at 0x{overlap.row.SourceOffset:X} (+0x{overlapLength:X})";
+            var detail = $"{candidate.row.Detail}; overlap hint: another carved header ({overlapName}) appears inside this NCA's claimed size window at 0x{overlap.row.SourceOffset:X}.";
+
+            updates[candidate.index] = candidate.row with
+            {
+                Detail = detail,
+                Extents = extents,
+                FragmentationStatus = status,
+                ExtentSummary = string.Join(", ", extents.Take(8).Select(extent => $"0x{extent.Offset:X}+0x{extent.Length:X}"))
+            };
+        }
+
+        if (updates.Count == 0)
+        {
+            return rows;
+        }
+
+        for (var index = 0; index < rows.Count; index++)
+        {
+            if (updates.TryGetValue(index, out var updated))
+            {
+                rows[index] = updated;
+            }
+        }
+
         return rows;
     }
 
@@ -746,8 +860,10 @@ public sealed class GenericFileCarver
             && header[0x202] == (byte)'A'
             && header[0x203] is (byte)'2' or (byte)'3')
         {
-            var detail = TryReadNcaDetail(stream, absoluteOffset, remainingLength) ?? "Nintendo Switch NCA content archive; plaintext/decrypted header detected";
-            return new GenericCarverMatch(string.Empty, ".nca", EstimateUnknownSize(remainingLength), detail);
+            var info = TryReadNcaHeaderInfo(stream, absoluteOffset, remainingLength);
+            var detail = info?.Detail ?? "Nintendo Switch NCA content archive; plaintext/decrypted header detected";
+            var size = info?.ResolvedSize > 0 ? info.ResolvedSize : EstimateUnknownSize(remainingLength);
+            return new GenericCarverMatch(string.Empty, ".nca", size, detail);
         }
 
         if (StartsWith(header, "PFS0"u8) && header.Length >= 0x10)
@@ -1476,13 +1592,25 @@ public sealed class GenericFileCarver
 
     private static string? TryReadNcaDetail(Stream stream, long absoluteOffset, long remainingLength)
     {
-        if (remainingLength < 0x400)
+        return TryReadNcaHeaderInfo(stream, absoluteOffset, remainingLength)?.Detail;
+    }
+
+    private static NcaHeaderInfo? TryReadNcaHeaderInfo(Stream stream, long absoluteOffset, long remainingLength)
+    {
+        if (remainingLength < 0x220)
         {
             return null;
         }
 
         Span<byte> header = stackalloc byte[0x400];
-        if (ReadAt(stream, absoluteOffset, header) < header.Length || !StartsWith(header[0x200..], "NCA"u8))
+        var read = ReadAt(stream, absoluteOffset, header);
+        if (read < 0x220 || !StartsWith(header[0x200..], "NCA"u8))
+        {
+            return null;
+        }
+
+        var version = header[0x203];
+        if (version is < (byte)'0' or > (byte)'9')
         {
             return null;
         }
@@ -1506,7 +1634,42 @@ public sealed class GenericFileCarver
         var cryptoType = header[0x206];
         var keyIndex = header[0x207];
         var programId = ReadUInt64LittleEndian(header[0x210..]);
-        return $"Nintendo Switch NCA content archive; {distribution}, {contentType}, crypto type 0x{cryptoType:X2}, key index 0x{keyIndex:X2}, program/content id 0x{programId:X16}";
+
+        var headerContentSize = (long)Math.Min((ulong)long.MaxValue, ReadUInt64LittleEndian(header[0x208..]));
+        long sectionTableSize = 0;
+        for (var index = 0; index < 4; index++)
+        {
+            var entry = header.Slice(0x240 + index * 0x10, 0x10);
+            var startMedia = ReadUInt32LittleEndian(entry);
+            var endMedia = ReadUInt32LittleEndian(entry[4..]);
+            if (startMedia == 0 || endMedia <= startMedia)
+            {
+                continue;
+            }
+
+            var sectionEnd = endMedia * 0x200L;
+            if (sectionEnd > sectionTableSize)
+            {
+                sectionTableSize = sectionEnd;
+            }
+        }
+
+        var validHeaderSize = headerContentSize > 0 && headerContentSize <= remainingLength ? headerContentSize : 0;
+        var validSectionSize = sectionTableSize > 0 && sectionTableSize <= remainingLength ? sectionTableSize : 0;
+        var resolvedSize = validHeaderSize > 0 ? validHeaderSize : validSectionSize;
+        if (resolvedSize <= 0)
+        {
+            resolvedSize = EstimateUnknownSize(remainingLength);
+        }
+
+        var sizeSource = validHeaderSize > 0
+            ? "header contentSize"
+            : validSectionSize > 0
+                ? "section table end"
+                : "estimated fallback";
+        var detail = $"Nintendo Switch NCA content archive; {distribution}, {contentType}, crypto type 0x{cryptoType:X2}, key index 0x{keyIndex:X2}, program/content id 0x{programId:X16}, size 0x{resolvedSize:X} ({sizeSource})";
+
+        return new NcaHeaderInfo(resolvedSize, detail);
     }
 
     private static IReadOnlyList<NcaSectionInfo> TryReadNcaSections(Stream stream, long absoluteOffset, long remainingLength)
@@ -1659,6 +1822,8 @@ public sealed class GenericFileCarver
     private sealed record Pfs0EntryInfo(string Name, long Offset, long Size);
 
     private sealed record NcaSectionInfo(int Index, long Offset, long Size);
+
+    private sealed record NcaHeaderInfo(long ResolvedSize, string Detail);
 
     private sealed record XvdXmlRun(long Offset, long Length, string? DisplayName);
 }

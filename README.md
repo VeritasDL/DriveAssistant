@@ -1,311 +1,57 @@
 # Drive Assistant
 
-Drive Assistant is a disk recovery and storage inspection tool for HDD, SSD, flash, and console drive images. The Windows desktop UI remains WPF, the Linux desktop UI is Avalonia, and the `drive-assistant` CLI runs on Linux/macOS/Windows for terminal workflows. It is designed for read-only analysis: open an image, inspect the partition layout, browse recoverable files, run metadata scans, carve known file formats, and export data without modifying the source.
+Drive Assistant is a read-only storage recovery and inspection tool for disk images and console media.
 
-The project has a general recovery-tool foundation with a strong focus on console storage formats. The long-term goal is support for most Nintendo console drives, all PlayStation and Xbox console HDDs/SSDs where technically practical, and common PC filesystems.
+It is built for practical recovery sessions: open an image, inspect partitions, browse files, run recovery scans, and export what you can recover.
 
-## Current Capabilities
+## Why This Project
 
-- Open raw disk images such as `.img`, `.bin`, and `.raw`.
-- Open HDD Raw Copy `.imgc` compressed images.
-- Browse and export from supported FATX, FAT16, FAT32, exFAT, NTFS, UFS2, and console-specific partition layouts.
-- Scan filesystem metadata for deleted, orphaned, or recoverable entries.
-- Carve known file signatures from raw disks and partitions with configurable scan profiles.
-- Inspect offsets, extents, clusters, timestamps, attributes, and recovery status.
-- Save and reload analysis databases for longer recovery sessions.
-- Keep recovery operations read-only against the source image.
+- Designed for real recovery workflows, not one-click demos.
+- Works across common PC disk images and many console storage formats.
+- Keeps source images untouched during analysis and export.
 
-## Supported Storage
+## What You Can Do
 
-| Family | Current support |
-| --- | --- |
-| General HDD/SSD images | Raw image loading, partition discovery, FAT16, FAT32, exFAT, NTFS, export, metadata scanning, file carving. |
-| Original Xbox | FATX partition browsing, metadata recovery, export, file carving. |
-| Xbox 360 | FATX partition browsing, metadata recovery, export, XEX carving, file carving. |
-| Xbox One / Xbox Series | GPT/NTFS browsing, XVD/XVC detection and classification, embedded XVD/XVC manifest extraction, and nested readable filesystem probing where possible. |
-| Legacy devkit / ROM / save media | PS1 memory-card active and deleted save-block browsing/export, PS1/Dreamcast/PSP ISO9660 data-track browsing plus unreferenced directory-record scanning for plain ISO and BIN/CUE MODE1/MODE2 images, PSP UMD ISO/CSO browsing/export, PSP EBOOT/PBP section export, PS Vita VPK/ZIP package browsing/export, PS2 memory-card raw media, Dreamcast Katana GDI descriptor track browsing with sidecar export, Dreamcast GDI ISO9660 track browsing, Dreamcast CDI/CIM/VMU/flash raw media, Nintendo 64 ROM/save metadata, Game Boy-family ROM/save metadata, Sega Saturn system-area detection, and whole-image raw export/carving. |
-| PlayStation 3 | Managed Cell HDD reader for plaintext, phat ATA-CBC-swapped, slim ATA-XTS-swapped, `dev_hdd0` UFS2, `dev_hdd1` FAT, and VFLASH FAT partitions. |
-| PlayStation 4 / PS4 Pro / devkit | Managed Orbis HDD image support with partition-relative XTS sectors, GPT-entry IV offsets, UFS-oriented browsing and recovery paths, PS4 package carving. |
-| PlayStation 2 | APA partition table detection for PS2 HDD images, managed PFS directory browsing/export, deleted/slack PFS metadata scanning, orphan PFS inode recovery candidates, HDLoader partition classification, raw partition export, and partition-scoped carving. |
-| Nintendo Wii / GameCube | GameCube FST disc browsing/export, native RVZ decompression for GameCube FST browsing/export, GameCube `.bca`/dump-info sidecar export, raw Wii disc image detection, WBFS container detection, RVT-H devkit HDD bank detection, managed Wii NAND SFFS metadata browsing/export with BootMii keys, raw export, and Wii/GameCube/WBFS carving signatures. |
-| Nintendo Wii U | Managed Wii U WFS MLC browsing/export with matching `otp.bin`, WFS deleted metadata candidates, WFS/dev storage candidate detection, CAT-DEV/CAT-SES ZIP-wrapped HDD handling, raw export, and WFS/FST/WUX carving signatures. |
-| Nintendo DS / DSi / 3DS | Nintendo DS NitroFS ROM browsing/export, keyed DSi No$GBA-footer NAND FAT browsing/export, keyed 3DS NAND FAT browsing when matching boot9/OTP/CID material is supplied, plaintext/decrypted CTR/DSi FAT image browsing/export/deleted FAT scanning, NCSD partition mapping, NCCH section mapping, raw export, and DS/3DS carving signatures. |
-| Nintendo Switch | Raw NAND/eMMC GPT discovery, BIS partition identification, managed AES-XTS mounting for decryptable FAT32 BIS partitions, Switch package/content carving, NSP/PFS0 entry expansion, CNMT metadata summaries, and NCA section spans. |
+- Open raw images (`.img`, `.bin`, `.raw`) and `.imgc`.
+- Browse supported filesystems and partitions.
+- Run metadata-based recovery scans.
+- Run signature-based file carving.
+- Export selected files with progress feedback.
+- Save and reload analysis sessions.
 
-## Recovery Workflows
+## Platform Apps
 
-Drive Assistant is built around practical recovery sessions rather than one-shot extraction.
+- `DriveAssistant.Wpf`: Windows desktop app (WPF).
+- `DriveAssistant.Avalonia`: Linux desktop app (Avalonia).
+- `DriveAssistant.Cli`: cross-platform terminal app.
 
-- **Browse:** mount supported partitions and inspect directory trees and file tables.
-- **Export:** copy files or folders out of an image with progress, cancellation, and disk-space preflight checks.
-- **Metadata scan:** search filesystem structures for deleted or orphaned records.
-- **File carving:** scan raw regions for known signatures when metadata is missing or damaged.
-- **Photo preview:** preview common image formats from mounted files and carved results in the inspector.
-- **Nested probing:** detect readable filesystems inside supported container formats such as Xbox XVD/XVC.
-- **Devkit mapping:** track public devkit model aliases and the storage/image formats they map to in [`docs/console-devkit-models.md`](docs/console-devkit-models.md).
-- **Analysis state:** save and reopen analysis databases to continue work later.
+## Quick Start
 
-## File Carving
-
-Prefer scanning the specific partition you care about instead of the whole disk whenever possible.
-
-Scan profiles:
-
-- `Fast` skips custom signatures and nested XVD/XVC filesystem probes.
-- `Balanced` uses custom signatures and bounded nested XVD/XVC probes.
-- `Exhaustive` uses custom signatures and deeper nested XVD/XVC probes.
-
-Intervals control scan step size:
-
-- `Sector` (`0x200`) is the default balance.
-- `Align` (`0x10`) and `Byte` (`0x1`) are more exhaustive but much slower.
-- `Page` (`0x1000`) is faster for formats commonly aligned to pages, such as many Xbox One/Series containers.
-
-Format-specific carving includes:
-
-- Xbox 360 XEX variants: `XEX0`, `XEX?`, `XEX-`, `XEX%`, `XEX1`, and `XEX2`.
-- PS4 packages: `CNT` package headers as `PKG`, including observed type-`1` debug packages as `DPKG`.
-- PS2 storage: APA HDD partition headers and partition-scoped carving from mounted PFS volumes.
-- Legacy/devkit media: PS1 memory cards, PS1/Dreamcast/PSP ISO9660 data tracks, PSP CSO compressed UMD images, PSP PBP containers, PS Vita VPK packages, PS2 memory cards, Dreamcast Katana `IP.BIN`, GDI descriptors, CIM containers, flash dumps, Nintendo 64 ROM/save images, Game Boy-family ROM headers, and Sega Saturn system areas.
-- Nintendo Wii / Wii U: Wii/GameCube disc images, WBFS containers, RVT-H disc banks, Wii U WFS markers, Wii U FST markers, and WUX compressed disc images.
-- Nintendo DS / DSi / 3DS: Nintendo DS NitroFS ROMs, 3DS NCSD/CCI/NAND images, and 3DS NCCH/CXI/CFA containers with header-declared section rows.
-- Nintendo Switch: plaintext/decrypted `NCA2`/`NCA3`, `NSP`/`PFS0` with nested entry expansion, `CNMT`, `XCI`, `NRO`, `NSO`, and generic `ELF`.
-- Custom signatures from `custom_carvers.json`.
-
-Raw encrypted content is not magically decrypted by carving. For encrypted console storage, mount or decrypt the relevant partition first when keys are available.
-
-## Wii U WFS Keys
-
-Wii U WFS storage is console-keyed. Current builds identify WFS/dev HDD candidates, accept local key material, derive the USB key from OTP plus SEEPROM, validate/decrypt the WFS device header, and mount MLC WFS directory trees when the matching `otp.bin` is supplied. Managed WFS export decrypts file blocks from the mounted MLC image.
-
-Accepted key paths:
-
-- A folder containing `otp.bin` and `seeprom.bin`.
-- `otp.bin` directly, with `seeprom.bin` in the same folder when opening USB/dev HDD images.
-
-`otp.bin` is normally 1024 bytes. `seeprom.bin` is normally 512 bytes. Do not publish real console OTP or SEEPROM dumps; keep them local, mirroring the Switch key-file approach.
-
-Some preserved Wii U devkit HDD dumps are ZIP64 local-header archives without a normal ZIP central directory. Drive Assistant will not silently expand a hundreds-of-GB raw image unless the temp drive has enough free space; if it cannot extract the raw `.img`, it reports the archive as a ZIP-wrapped candidate instead of pretending the compressed wrapper is browseable WFS data.
-
-## DS, DSi, And 3DS Keys
-
-Plain Nintendo DS ROMs are NitroFS containers and do not need keys for browsing/export. DSi NAND dumps with a No$GBA footer are decrypted locally into temporary FAT partitions for browsing/export. 3DS NAND browsing accepts a local folder containing matching `boot9.bin`, OTP (`otp.bin`, `otp.mem`, or `otp_dec.mem`), and NAND CID (`nand_cid.mem` or `nand_cid.bin`).
-
-Plaintext or already-decrypted 3DS/DSi FAT images mount directly and support active browsing, export, deleted FAT entry scanning, and file carving. Example placeholder formats are in [`docs/example-key-files`](docs/example-key-files); keep real `boot9.bin`, OTP, CID, movable.sed, and NAND-derived keys local to the console that produced the dump.
-
-PSP UMD `.iso` images mount through ISO9660, and PSP `.cso` compressed UMD images are decompressed into a temporary ISO for the same browser/export path. PSP Memory Stick dumps that are plain FAT12/FAT16/FAT32 mount through the generic filesystem path. PSP NAND images support mapped FAT12 flash partitions, plus physical 512+16 page dumps when spare-area logical block metadata is present. PS Vita `.vpk`/ZIP packages can be browsed and exported when they expose `sce_sys/param.sfo`; plaintext/decrypted Vita NAND/eMMC partition maps mount FAT16 and exFAT partitions. Encrypted Vita PFS, CMA backup, and externally dumped encrypted NAND/eMMC content still require matching keys or external decryption before filesystem browsing.
-
-## Wii Keys
-
-Wii support accepts a folder, `.tar.gz`, or `.tgz` archive containing local `common-key`, `sd-key`, `sd-iv`, and `md5-blanker` files. It also accepts BootMii-style `keys.bin` files for Wii NAND exports. These are detected without printing key bytes. The preserved `wii-keys.tar.gz` style archive is supported directly.
-
-Wii NAND file export/decryption needs the matching console's BootMii `keys.bin`. The shared Wii common/SD key archive is not enough for Wii NAND file decryption, and Wii keys are not Wii U `otp.bin`/`seeprom.bin` files.
-
-## Nintendo Switch Keys
-
-Switch NAND/eMMC images can be opened without keys for GPT partition discovery. Encrypted BIS partitions need a text key file to mount.
-
-Public placeholder examples are available in [`docs/example-key-files`](docs/example-key-files). Replace every placeholder with keys dumped from the same console that produced the NAND/eMMC image. Do not publish real console keys.
-
-Accepted forms:
-
-```text
-BIS KEY 0 (crypt): 00112233445566778899AABBCCDDEEFF
-BIS KEY 0 (tweak): 00112233445566778899AABBCCDDEEFF
-BIS KEY 1 (crypt): 00112233445566778899AABBCCDDEEFF
-BIS KEY 1 (tweak): 00112233445566778899AABBCCDDEEFF
-BIS KEY 2 (crypt): 00112233445566778899AABBCCDDEEFF
-BIS KEY 2 (tweak): 00112233445566778899AABBCCDDEEFF
-BIS KEY 3 (crypt): 00112233445566778899AABBCCDDEEFF
-BIS KEY 3 (tweak): 00112233445566778899AABBCCDDEEFF
-```
-
-or prod.keys-style names:
-
-```text
-bis_key_00_crypt = 00112233445566778899AABBCCDDEEFF
-bis_key_00_tweak = 00112233445566778899AABBCCDDEEFF
-bis_key_01_crypt = 00112233445566778899AABBCCDDEEFF
-bis_key_01_tweak = 00112233445566778899AABBCCDDEEFF
-bis_key_02_crypt = 00112233445566778899AABBCCDDEEFF
-bis_key_02_tweak = 00112233445566778899AABBCCDDEEFF
-bis_key_03_crypt = 00112233445566778899AABBCCDDEEFF
-bis_key_03_tweak = 00112233445566778899AABBCCDDEEFF
-```
-
-Partition mapping:
-
-- BIS key 0: `PRODINFO` / `PRODINFOF`
-- BIS key 1: `SAFE`
-- BIS key 2: `SYSTEM`
-- BIS key 3: `USER`
-
-Each value must be exactly 32 hexadecimal characters. If a FAT32 BIS partition does not mount, re-check the matching crypt/tweak pair; one wrong character is enough to produce random decrypted data instead of a valid boot sector.
-
-## Roadmap
-
-Drive Assistant is moving toward a broader public recovery tool with deep console support.
-
-Planned direction:
-
-- Stronger general HDD/SSD workflows: more partition layouts, damaged filesystem handling, richer export validation, and better reporting.
-- Nintendo storage support across DS, 3DS, Wii, Wii U, and Switch.
-- PlayStation storage support across PS1/PS2 memory/storage media where applicable, PS3, PS4, PS5, and future variants where technically practical.
-- Xbox storage support across original Xbox, Xbox 360, Xbox One, Xbox Series, and future variants where technically practical.
-- More file-carving signatures for console packages, executables, save data, media, and common user files.
-- Better public documentation, fixtures, and reproducible validation images.
-
-## Download
-
-Download the latest Windows x64 ZIP from [GitHub Releases](https://github.com/rain0x06/DriveAssistant/releases/latest), extract it, and run `Drive Assistant.exe`.
-
-The portable release package is self-contained and includes the .NET runtime.
-
-Linux desktop users can download the latest `DriveAssistant.Desktop-*-linux-x64.tar.gz` or `DriveAssistant.Desktop-*-linux-arm64.tar.gz` release asset, extract it, and run:
-
-```bash
-chmod +x ./Drive\ Assistant
-./Drive\ Assistant
-```
-
-On minimal Ubuntu/WSL images, install the small X11/Avalonia runtime libraries first:
-
-```bash
-sudo apt install libice6 libsm6 libx11-6 libxrandr2 libxcursor1 libxi6 libgl1 fontconfig
-```
-
-Linux terminal users can download the latest `DriveAssistant.Cli-*-linux-x64.tar.gz` or `DriveAssistant.Cli-*-linux-arm64.tar.gz` release asset, extract it, and run:
-
-```bash
-chmod +x ./drive-assistant
-./drive-assistant --help
-```
-
-## Requirements
-
-- Windows 10/11 for the WPF desktop app.
-- Linux x64 or arm64 for Avalonia desktop and CLI release tarballs. Ubuntu, Debian, Fedora, Arch, and Nix/NixOS source workflows are supported through .NET 8.
-- Minimal Linux desktops must provide common Avalonia/X11 runtime libraries such as `libice6`, `libsm6`, `libx11-6`, `libxrandr2`, `libxcursor1`, `libxi6`, `libgl1`, and `fontconfig`.
-- .NET 8 SDK for building from source.
-- Visual Studio 2022 is optional but recommended for UI work.
-
-Check your SDK:
-
-```powershell
-dotnet --info
-```
-
-## Build
-
-From the repository root:
-
-```powershell
-dotnet restore DriveAssistant.sln
-dotnet build DriveAssistant.sln -c Release
-```
-
-Run the app from the build output:
-
-```powershell
-& ".\DriveAssistant.Wpf\bin\Release\net8.0-windows\Drive Assistant.exe"
-```
-
-Run the Linux-capable Avalonia desktop app from source:
-
-```bash
-dotnet run --project DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj
-```
-
-Run the cross-platform CLI from source:
-
-```bash
-dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- info ./disk.img
-dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- list ./disk.img --partition 0 --recursive
-dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- export ./disk.img /path/in/image/file.bin ./file.bin --partition 0
-```
-
-Nix source workflow:
-
-```bash
-nix develop
-dotnet test DriveAssistant.sln
-nix run .#drive-assistant-desktop
-nix run .#drive-assistant -- info ./disk.img
-```
-
-## Test
-
-Run the full test suite:
-
-```powershell
-dotnet test DriveAssistant.sln -c Release
-```
-
-Run only WPF support tests:
-
-```powershell
-dotnet test DriveAssistant.Wpf.Tests\DriveAssistant.Wpf.Tests.csproj -c Release
-```
-
-## Publish a Portable Build
-
-Framework-dependent publish:
-
-```powershell
-dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -o .\publish\DriveAssistant
-```
-
-Self-contained Windows x64 publish:
-
-```powershell
-dotnet publish DriveAssistant.Wpf\DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o .\publish\DriveAssistant-win-x64
-```
-
-Self-contained Linux CLI publish:
-
-```bash
-dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-x64
-dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-arm64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-arm64
-```
-
-Self-contained Linux Avalonia desktop publish:
-
-```bash
-dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Desktop-linux-x64
-dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r linux-arm64 --self-contained true -o ./publish/DriveAssistant.Desktop-linux-arm64
-```
-
-## Repository Layout
-
-| Path | Purpose |
-| --- | --- |
-| `DriveAssistant.Wpf` | Active Windows WPF desktop application, published as `Drive Assistant.exe`. |
-| `DriveAssistant.Avalonia` | Linux-capable Avalonia desktop application with the same major WPF layout regions. |
-| `DriveAssistant.Cli` | Cross-platform terminal host for Linux/macOS/Windows, published as `drive-assistant`. |
-| `DriveAssistant.Wpf.Tests` | Tests for image readers and WPF-supporting scanners. |
-| `DriveAssistant.Shared` | Shared support files used by the WPF app. |
-| `FATX` | Core FATX reader, metadata scanner, and legacy FATX signature carver library. |
-| `FATX.Tests` | Tests for the core FATX library. |
-| `docs` | User, troubleshooting, and example-key documentation. |
+1. Download the latest release: [GitHub Releases](https://github.com/rain0x06/DriveAssistant/releases/latest)
+2. Extract it.
+3. Launch the app for your platform:
+   - Windows: `Drive Assistant.exe`
+   - Linux desktop: `Drive Assistant`
+   - CLI: `drive-assistant --help`
 
 ## Documentation
 
+Technical and detailed reference material lives in `docs/`.
+
 - [User Guide](docs/USER_GUIDE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Example Key Files](docs/example-key-files)
+- [Console/Devkit Model Coverage](docs/console-devkit-models.md)
+- [Real Image Fixtures](docs/real-image-fixtures.md)
+- [Example Key Files](docs/example-key-files/README.md)
 
-## Sources And References
+## Repository
 
-- [FATXTools](https://github.com/aerosoul94/FATXTools/) for the initial FATX-focused codebase.
-- [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) for PlayStation helper tooling lineage and storage-behavior reference material.
-- [DiscUtils.Ntfs 0.16.13](https://www.nuget.org/packages/DiscUtils.Ntfs) for NTFS parsing used by the Xbox GPT/NTFS reader.
-- [UEFI Specification, GUID Partition Table layout](https://uefi.org/specs/UEFI/2.10/) for GPT structure and partition-table parsing behavior.
-- [Microsoft exFAT file system specification](https://learn.microsoft.com/windows/win32/fileio/exfat-specification) for exFAT layout reference.
-- [wfs-tools](https://github.com/koolkdev/wfs-tools) for Wii U WFS structure and block-encryption reference behavior.
-- [FreeBSD UFS dinode definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dinode.h), [directory entry definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ufs/dir.h), and [FFS superblock definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/ufs/ffs/fs.h) for UFS2 metadata parsing and recovery heuristics.
-- [PSDevWiki PS4 PKG files](https://www.psdevwiki.com/ps4/PKG_files), [PS4 partitions](https://www.psdevwiki.com/ps4/Partitions), [PS5 partitions](https://www.psdevwiki.com/ps5/Partitions), [PS5 filesystem](https://www.psdevwiki.com/ps5/Filesystem), and [PS5 kernel](https://www.psdevwiki.com/ps5/Kernel) for PlayStation package and storage-layout references.
-- [.NET application publishing documentation](https://learn.microsoft.com/dotnet/core/deploying/) for the self-contained Windows release package workflow.
+- `DriveAssistant.Wpf` - Windows desktop UI
+- `DriveAssistant.Avalonia` - Linux desktop UI
+- `DriveAssistant.Cli` - terminal workflow
+- `FATX` - core FATX/recovery library
+- `docs` - guides and technical documentation
 
 ## License
 
-This project is licensed under the terms in [LICENSE](LICENSE).
+This project is licensed under [LICENSE](LICENSE).

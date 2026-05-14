@@ -45,3 +45,18 @@
   - try `Drive -> Search For Partitions`
   - use `Drive -> Add Partition` with manual offsets
   - use `Recovery View` cluster chain editor for fragmented files
+
+## 8. Developer / Build Reference
+- Build the solution:
+  - `dotnet restore DriveAssistant.sln`
+  - `dotnet build DriveAssistant.sln -c Release`
+- Run tests:
+  - `dotnet test DriveAssistant.sln -c Release`
+- Run from source:
+  - Windows UI: `dotnet run --project DriveAssistant.Wpf/DriveAssistant.Wpf.csproj`
+  - Linux UI: `dotnet run --project DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj`
+  - CLI: `dotnet run --project DriveAssistant.Cli/DriveAssistant.Cli.csproj -- --help`
+- Publish examples:
+  - Windows self-contained: `dotnet publish DriveAssistant.Wpf/DriveAssistant.Wpf.csproj -c Release -r win-x64 --self-contained true -o ./publish/DriveAssistant-win-x64`
+  - Linux desktop self-contained: `dotnet publish DriveAssistant.Avalonia/DriveAssistant.Avalonia.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Desktop-linux-x64`
+  - Linux CLI self-contained: `dotnet publish DriveAssistant.Cli/DriveAssistant.Cli.csproj -c Release -r linux-x64 --self-contained true -o ./publish/DriveAssistant.Cli-linux-x64`
