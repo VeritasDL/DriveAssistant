@@ -18,6 +18,44 @@ internal static class FatxImageRebuildCommand
 
     public static int Run(string[] args)
     {
+        return Run(args, execution: null);
+    }
+
+    public static int Run(string[] args, RebuildExecutionOptions? execution)
+    {
+        CancellationTokenSource? defaultCancellation = null;
+        ConsoleCancelEventHandler? cancelHandler = null;
+        if (execution == null)
+        {
+            defaultCancellation = new CancellationTokenSource();
+            var lastPercent = -1;
+            string? lastStage = null;
+            execution = new RebuildExecutionOptions
+            {
+                CancellationToken = defaultCancellation.Token,
+                Progress = snapshot =>
+                {
+                    if (snapshot.Percent == lastPercent && string.Equals(snapshot.Stage, lastStage, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    lastPercent = snapshot.Percent;
+                    lastStage = snapshot.Stage;
+                    Console.Write($"\r[{snapshot.Percent,3}%] {snapshot.Stage} - {snapshot.Detail}   ");
+                }
+            };
+
+            cancelHandler = (_, e) =>
+            {
+                e.Cancel = true;
+                defaultCancellation.Cancel();
+            };
+            Console.CancelKeyPress += cancelHandler;
+        }
+
+        try
+        {
         var options = RebuildOptions.Parse(args);
         options = PromptMissing(options);
 
@@ -66,7 +104,11 @@ internal static class FatxImageRebuildCommand
         using var stream = new FileStream(outputPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
         stream.SetLength(outputLength);
 
-        var stats = RebuildPartition(stream, snapshot, partition, nodes, options.SerialNumber);
+        var stats = RebuildPartition(stream, snapshot, partition, nodes, options.SerialNumber, execution);
+        if (defaultCancellation != null)
+        {
+            Console.WriteLine();
+        }
 
         Console.WriteLine("FATX rebuild complete.");
         Console.WriteLine($"  Snapshot:   {options.SnapshotPath}");
@@ -78,6 +120,22 @@ internal static class FatxImageRebuildCommand
         Console.WriteLine($"  Skipped:    {stats.SkippedEntries:N0} entries not found in source folders");
         Console.WriteLine($"  FAT format: {(stats.IsFat16 ? "FAT16" : "FAT32")} ({stats.MaxUsableCluster:N0} usable clusters)");
         return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine();
+            Console.Error.WriteLine("error: FATX rebuild canceled.");
+            return Error;
+        }
+        finally
+        {
+            if (cancelHandler != null)
+            {
+                Console.CancelKeyPress -= cancelHandler;
+            }
+
+            defaultCancellation?.Dispose();
+        }
     }
 
     private static RebuildStats RebuildPartition(
@@ -85,7 +143,8 @@ internal static class FatxImageRebuildCommand
         RebuildSnapshot snapshot,
         RebuildPartitionSnapshot partition,
         List<RebuildNode> rootEntries,
-        uint serialNumber)
+        uint serialNumber,
+        RebuildExecutionOptions execution)
     {
         var layout = FatxLayout.Create(partition.Offset, partition.Length);
         var allocator = new ClusterAllocator(layout.MaxUsableCluster);
@@ -93,42 +152,72 @@ internal static class FatxImageRebuildCommand
         var rootClusters = AllocateRootDirectoryClusters(rootEntries.Count, allocator);
         var allDirectories = new List<RebuildNode>();
         CollectDirectoryNodes(rootEntries, allDirectories);
+        var allFiles = new List<RebuildNode>();
+        CollectFileNodes(rootEntries, allFiles);
+
+        var totalStages = Math.Max(1, 4 + allDirectories.Count + allFiles.Count);
+        var completedStages = 0L;
+        ReportProgress(execution, "Rebuild", completedStages, totalStages, "Preparing layout");
 
         foreach (var directory in allDirectories)
         {
+            ObserveExecution(execution);
             var requiredClusters = Math.Max(1, (int)Math.Ceiling(directory.Children.Count / (double)DirentsPerCluster));
             directory.Clusters = TryAllocatePreferredContiguous(directory.FirstClusterHint, requiredClusters, allocator)
                 ?? allocator.AllocateContiguous(requiredClusters);
+            completedStages++;
+            ReportProgress(execution, "Allocate directories", completedStages, totalStages, directory.RelativePath);
         }
 
-        var allFiles = new List<RebuildNode>();
-        CollectFileNodes(rootEntries, allFiles);
         foreach (var file in allFiles)
         {
+            ObserveExecution(execution);
             if (file.Size <= 0)
             {
+                completedStages++;
+                ReportProgress(execution, "Allocate files", completedStages, totalStages, file.RelativePath);
                 continue;
             }
 
             var clustersNeeded = (int)Math.Ceiling(file.Size / (double)layout.BytesPerCluster);
             file.Clusters = AllocateFileClusters(file, clustersNeeded, allocator, layout.MaxUsableCluster);
+            completedStages++;
+            ReportProgress(execution, "Allocate files", completedStages, totalStages, file.RelativePath);
         }
 
+        ObserveExecution(execution);
         WriteDevkitHeader(stream, snapshot.Partitions);
+        completedStages++;
+        ReportProgress(execution, "Write headers", completedStages, totalStages, "Devkit header");
+
+        ObserveExecution(execution);
         WriteFatxHeader(stream, layout, serialNumber);
-        WriteFat(stream, layout, rootClusters, rootEntries);
-        WriteDirectoryStream(stream, layout, rootClusters, rootEntries);
+        completedStages++;
+        ReportProgress(execution, "Write headers", completedStages, totalStages, "FATX header");
+
+        WriteFat(stream, layout, rootClusters, rootEntries, execution);
+        completedStages++;
+        ReportProgress(execution, "Write FAT", completedStages, totalStages, "FAT table");
+
+        WriteDirectoryStream(stream, layout, rootClusters, rootEntries, execution);
+        completedStages++;
+        ReportProgress(execution, "Write directories", completedStages, totalStages, "Root directory");
         foreach (var directory in allDirectories)
         {
-            WriteDirectoryStream(stream, layout, directory.Clusters, directory.Children);
+            WriteDirectoryStream(stream, layout, directory.Clusters, directory.Children, execution);
+            completedStages++;
+            ReportProgress(execution, "Write directories", completedStages, totalStages, directory.RelativePath);
         }
 
         foreach (var file in allFiles)
         {
-            WriteFilePayload(stream, layout, file);
+            WriteFilePayload(stream, layout, file, execution);
+            completedStages++;
+            ReportProgress(execution, "Write payloads", completedStages, totalStages, file.RelativePath);
         }
 
         var totalDirs = allDirectories.Count + 1; // include root directory stream
+        ReportProgress(execution, "Complete", totalStages, totalStages, "Image rebuild complete");
         return new RebuildStats
         {
             DirectoriesWritten = totalDirs,
@@ -266,7 +355,7 @@ internal static class FatxImageRebuildCommand
         return results.Distinct().ToList();
     }
 
-    private static void WriteFat(FileStream stream, FatxLayout layout, IReadOnlyList<uint> rootClusters, IReadOnlyList<RebuildNode> rootEntries)
+    private static void WriteFat(FileStream stream, FatxLayout layout, IReadOnlyList<uint> rootClusters, IReadOnlyList<RebuildNode> rootEntries, RebuildExecutionOptions execution)
     {
         var fat = new uint[layout.MaxClusters];
         fat[0] = layout.EndOfChain;
@@ -274,6 +363,7 @@ internal static class FatxImageRebuildCommand
 
         foreach (var entry in WalkNodes(rootEntries))
         {
+            ObserveExecution(execution);
             if (entry.Clusters.Count == 0)
             {
                 continue;
@@ -289,8 +379,14 @@ internal static class FatxImageRebuildCommand
         if (layout.IsFat16)
         {
             Span<byte> raw = stackalloc byte[2];
-            foreach (var entry in fat)
+            for (var index = 0; index < fat.Length; index++)
             {
+                if ((index & 0xFFF) == 0)
+                {
+                    ObserveExecution(execution);
+                }
+
+                var entry = fat[index];
                 BinaryPrimitives.WriteUInt16BigEndian(raw, (ushort)Math.Min(entry, Constants.Cluster16Last));
                 stream.Write(raw);
             }
@@ -298,8 +394,14 @@ internal static class FatxImageRebuildCommand
         else
         {
             Span<byte> raw = stackalloc byte[4];
-            foreach (var entry in fat)
+            for (var index = 0; index < fat.Length; index++)
             {
+                if ((index & 0xFFF) == 0)
+                {
+                    ObserveExecution(execution);
+                }
+
+                var entry = fat[index];
                 BinaryPrimitives.WriteUInt32BigEndian(raw, entry);
                 stream.Write(raw);
             }
@@ -325,7 +427,7 @@ internal static class FatxImageRebuildCommand
         }
     }
 
-    private static void WriteDirectoryStream(FileStream stream, FatxLayout layout, IReadOnlyList<uint> clusters, IReadOnlyList<RebuildNode> entries)
+    private static void WriteDirectoryStream(FileStream stream, FatxLayout layout, IReadOnlyList<uint> clusters, IReadOnlyList<RebuildNode> entries, RebuildExecutionOptions execution)
     {
         if (clusters.Count == 0)
         {
@@ -335,11 +437,13 @@ internal static class FatxImageRebuildCommand
         var clusterBuffers = new byte[clusters.Count][];
         for (var index = 0; index < clusters.Count; index++)
         {
+            ObserveExecution(execution);
             clusterBuffers[index] = new byte[layout.BytesPerCluster];
         }
 
         for (var entryIndex = 0; entryIndex < entries.Count; entryIndex++)
         {
+            ObserveExecution(execution);
             var clusterIndex = entryIndex / DirentsPerCluster;
             var slot = entryIndex % DirentsPerCluster;
             if (clusterIndex >= clusterBuffers.Length)
@@ -353,6 +457,7 @@ internal static class FatxImageRebuildCommand
 
         for (var index = 0; index < clusters.Count; index++)
         {
+            ObserveExecution(execution);
             var offset = layout.ClusterToPhysicalOffset(clusters[index]);
             stream.Position = offset;
             stream.Write(clusterBuffers[index], 0, clusterBuffers[index].Length);
@@ -469,8 +574,9 @@ internal static class FatxImageRebuildCommand
         return (uint)((year << 25) | (value.Month << 21) | (value.Day << 16) | (value.Hour << 11) | (value.Minute << 5) | second);
     }
 
-    private static void WriteFilePayload(FileStream stream, FatxLayout layout, RebuildNode file)
+    private static void WriteFilePayload(FileStream stream, FatxLayout layout, RebuildNode file, RebuildExecutionOptions execution)
     {
+        ObserveExecution(execution);
         if (file.Clusters.Count == 0 || string.IsNullOrWhiteSpace(file.SourcePath) || !File.Exists(file.SourcePath))
         {
             return;
@@ -487,6 +593,7 @@ internal static class FatxImageRebuildCommand
         var buffer = new byte[layout.BytesPerCluster];
         foreach (var cluster in file.Clusters)
         {
+            ObserveExecution(execution);
             if (remaining <= 0)
             {
                 break;
@@ -510,6 +617,27 @@ internal static class FatxImageRebuildCommand
             stream.Write(buffer, 0, buffer.Length);
             remaining -= bytesToCopy;
         }
+    }
+
+    private static void ObserveExecution(RebuildExecutionOptions execution)
+    {
+        while (execution.IsPaused?.Invoke() == true)
+        {
+            execution.CancellationToken.ThrowIfCancellationRequested();
+            Thread.Sleep(125);
+        }
+
+        execution.CancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private static void ReportProgress(
+        RebuildExecutionOptions execution,
+        string stage,
+        long completed,
+        long total,
+        string detail)
+    {
+        execution.Progress?.Invoke(new RebuildProgressSnapshot(stage, completed, total, detail));
     }
 
     private static void WriteFatxHeader(FileStream stream, FatxLayout layout, uint serialNumber)
@@ -1468,6 +1596,22 @@ internal static class FatxImageRebuildCommand
             return args[index];
         }
     }
+}
+
+public sealed record RebuildProgressSnapshot(string Stage, long Completed, long Total, string Detail)
+{
+    public int Percent => Total <= 0
+        ? 0
+        : Math.Clamp((int)Math.Round(Completed * 100.0 / Total), 0, 100);
+}
+
+public sealed class RebuildExecutionOptions
+{
+    public CancellationToken CancellationToken { get; init; } = CancellationToken.None;
+
+    public Func<bool>? IsPaused { get; init; }
+
+    public Action<RebuildProgressSnapshot>? Progress { get; init; }
 }
 
 internal sealed class RebuildSnapshot

@@ -615,26 +615,78 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             args.Add(SelectedPartition.Name);
         }
 
+        var rebuildCancellation = new CancellationTokenSource();
+        var pauseFlag = 0;
+        var progressDialog = new RebuildProgressDialog
+        {
+            Owner = this
+        };
+        progressDialog.CancelRequested += (_, _) =>
+        {
+            if (!rebuildCancellation.IsCancellationRequested)
+            {
+                rebuildCancellation.Cancel();
+                StatusText = "Canceling FATX rebuild...";
+                AppendLog("FATX rebuild cancellation requested.");
+            }
+        };
+        progressDialog.PauseChanged += (_, isPaused) =>
+        {
+            Interlocked.Exchange(ref pauseFlag, isPaused ? 1 : 0);
+            StatusText = isPaused ? "FATX rebuild paused" : "Rebuilding FATX image from JSON...";
+            AppendLog(isPaused ? "FATX rebuild paused." : "FATX rebuild resumed.");
+        };
+        progressDialog.Show();
+
         try
         {
             await Task.Run(() =>
             {
-                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray());
+                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray(), new DriveAssistant.Cli.RebuildExecutionOptions
+                {
+                    CancellationToken = rebuildCancellation.Token,
+                    IsPaused = () => Volatile.Read(ref pauseFlag) == 1,
+                    Progress = snapshot =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            progressDialog.Update(snapshot.Percent, snapshot.Stage, snapshot.Detail);
+                            StatusText = Volatile.Read(ref pauseFlag) == 1
+                                ? "FATX rebuild paused"
+                                : $"Rebuilding FATX image from JSON... {snapshot.Percent:0}%";
+                        });
+                    }
+                });
                 if (exitCode != 0)
                 {
+                    if (rebuildCancellation.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(rebuildCancellation.Token);
+                    }
+
                     throw new InvalidOperationException("FATX rebuild command failed. Check the selected JSON and source folders.");
                 }
-            });
+            }, rebuildCancellation.Token);
 
             StatusText = "Ready";
             AppendLog($"FATX rebuild complete: {outputDialog.FileName}");
             MessageBox.Show(this, $"Rebuilt FATX image:\n{outputDialog.FileName}", AppName, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Rebuild canceled";
+            AppendLog("FATX rebuild canceled.");
         }
         catch (Exception ex)
         {
             StatusText = "Failed";
             AppendLog($"FATX rebuild failed: {ex.Message}");
             MessageBox.Show(this, ex.Message, AppName, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            progressDialog.Close();
+            rebuildCancellation.Dispose();
         }
     }
 
@@ -5734,10 +5786,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _recoveryDatabase = null;
         _recoveryIntegrity = null;
 
+        var metadataTopLevelRows = 0;
+        var metadataTotalRows = 0;
+        var metadataFileRows = 0;
         foreach (var (livePartition, partitionSnapshot) in partitionMatches)
         {
             StampSnapshotPartition(partitionSnapshot.OriginalFilesystem, partitionSnapshot.Name);
             StampSnapshotPartition(partitionSnapshot.Analysis.MetadataAnalyzer, livePartition.Name);
+            metadataTopLevelRows += partitionSnapshot.Analysis.MetadataAnalyzer.Count;
+            metadataTotalRows += CountSnapshotEntriesRecursive(partitionSnapshot.Analysis.MetadataAnalyzer);
+            metadataFileRows += CountSnapshotFilesRecursive(partitionSnapshot.Analysis.MetadataAnalyzer);
             foreach (var row in partitionSnapshot.Analysis.MetadataAnalyzer.Select(entry => new FileRow(entry, "Metadata")))
             {
                 MetadataResults.Add(row);
@@ -5758,7 +5816,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         StatusText = "Ready";
         AppendLog($"Loaded database: {path}");
         AppendLog($"Database validation passed: matched {partitionMatches.Count:N0} partition(s) against the open image.");
-        AppendLog($"Restored database analysis rows: metadata {MetadataResults.Count:N0}, carved files {CarvedFiles.Count:N0}.");
+        AppendLog($"Restored database analysis rows: metadata roots {MetadataResults.Count:N0}, metadata recursive rows {metadataTotalRows:N0}, metadata recursive files {metadataFileRows:N0}, carved files {CarvedFiles.Count:N0}.");
+        if (metadataTopLevelRows != metadataTotalRows)
+        {
+            AppendLog("Legacy JSON note: metadata root-row count differs from recursive file count. Compare recursive files for parity with legacy file totals.");
+        }
         if (!string.IsNullOrWhiteSpace(snapshot.ActivePartitionName))
         {
             SelectedPartition = Partitions.FirstOrDefault(partition => string.Equals(partition.Name, snapshot.ActivePartitionName, StringComparison.OrdinalIgnoreCase))
@@ -6090,6 +6152,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             entry.PartitionName = partitionName;
             StampSnapshotPartition(entry.Children, partitionName);
         }
+    }
+
+    private static int CountSnapshotEntriesRecursive(IEnumerable<SnapshotFileEntry> entries)
+    {
+        var total = 0;
+        foreach (var entry in entries)
+        {
+            total++;
+            total += CountSnapshotEntriesRecursive(entry.Children);
+        }
+
+        return total;
+    }
+
+    private static int CountSnapshotFilesRecursive(IEnumerable<SnapshotFileEntry> entries)
+    {
+        var total = 0;
+        foreach (var entry in entries)
+        {
+            if (!entry.IsDirectory)
+            {
+                total++;
+            }
+
+            total += CountSnapshotFilesRecursive(entry.Children);
+        }
+
+        return total;
     }
 
     private async Task<bool> RunUiTaskAsync<T>(string busyText, Func<T> worker, Action<T> completed, bool showError = true)
@@ -6954,6 +7044,112 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var value = storedWidth.Value >= 120 ? storedWidth.Value : fallback;
         return new GridLength(value);
+    }
+}
+
+internal sealed class RebuildProgressDialog : Window
+{
+    private readonly ProgressBar _progressBar;
+    private readonly TextBlock _stageText;
+    private readonly TextBlock _detailText;
+    private readonly Button _pauseButton;
+    private bool _isPaused;
+
+    public RebuildProgressDialog()
+    {
+        Title = "FATX Rebuild Progress";
+        Width = 520;
+        Height = 200;
+        MinWidth = 480;
+        MinHeight = 180;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
+
+        _stageText = new TextBlock
+        {
+            Text = "Preparing rebuild...",
+            FontWeight = FontWeights.SemiBold
+        };
+        _detailText = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Foreground = new SolidColorBrush(Color.FromRgb(149, 164, 184)),
+            Text = string.Empty
+        };
+        _progressBar = new ProgressBar
+        {
+            Margin = new Thickness(0, 14, 0, 0),
+            Minimum = 0,
+            Maximum = 100,
+            Height = 16,
+            Value = 0
+        };
+
+        _pauseButton = new Button
+        {
+            MinWidth = 92,
+            Content = "Pause",
+            Margin = new Thickness(0, 12, 8, 0)
+        };
+        _pauseButton.Click += (_, _) =>
+        {
+            _isPaused = !_isPaused;
+            _pauseButton.Content = _isPaused ? "Resume" : "Pause";
+            PauseChanged?.Invoke(this, _isPaused);
+        };
+
+        var cancelButton = new Button
+        {
+            MinWidth = 92,
+            Content = "Cancel",
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        cancelButton.Click += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Children = { _pauseButton, cancelButton }
+        };
+
+        var layoutRoot = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto }
+            },
+            Children =
+            {
+                _stageText,
+                _detailText,
+                _progressBar,
+                buttons
+            }
+        };
+        Grid.SetRow(_detailText, 1);
+        Grid.SetRow(_progressBar, 2);
+        Grid.SetRow(buttons, 3);
+
+        Content = new Border
+        {
+            Padding = new Thickness(16),
+            Child = layoutRoot
+        };
+    }
+
+    public event EventHandler? CancelRequested;
+
+    public event EventHandler<bool>? PauseChanged;
+
+    public void Update(int percent, string stage, string detail)
+    {
+        _progressBar.Value = Math.Clamp(percent, 0, 100);
+        _stageText.Text = $"{Math.Clamp(percent, 0, 100):0}% - {stage}";
+        _detailText.Text = detail;
     }
 }
 

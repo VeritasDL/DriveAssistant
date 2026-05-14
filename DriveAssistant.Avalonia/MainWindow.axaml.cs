@@ -4,6 +4,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using DriveAssistant.Avalonia.Core;
 using DriveAssistant.Avalonia.ViewModels;
 using FATXTools.Utilities;
@@ -231,24 +232,71 @@ public sealed partial class MainWindow : Window
             args.Add(ViewModel.SelectedPartition.Index.ToString(CultureInfo.InvariantCulture));
         }
 
+        using var rebuildCancellation = new CancellationTokenSource();
+        var pauseFlag = 0;
+        var progressDialog = new RebuildProgressDialog();
+        progressDialog.CancelRequested += (_, _) =>
+        {
+            if (!rebuildCancellation.IsCancellationRequested)
+            {
+                rebuildCancellation.Cancel();
+                ViewModel.StatusText = "Canceling FATX rebuild...";
+            }
+        };
+        progressDialog.PauseChanged += (_, isPaused) =>
+        {
+            Interlocked.Exchange(ref pauseFlag, isPaused ? 1 : 0);
+            ViewModel.StatusText = isPaused ? "FATX rebuild paused" : "Rebuilding FATX image from JSON...";
+        };
+        var progressDialogTask = progressDialog.ShowDialog(this);
+
         try
         {
             await Task.Run(() =>
             {
-                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray());
+                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray(), new DriveAssistant.Cli.RebuildExecutionOptions
+                {
+                    CancellationToken = rebuildCancellation.Token,
+                    IsPaused = () => Volatile.Read(ref pauseFlag) == 1,
+                    Progress = snapshot =>
+                    {
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            progressDialog.Update(snapshot.Percent, snapshot.Stage, snapshot.Detail);
+                            ViewModel.StatusText = Volatile.Read(ref pauseFlag) == 1
+                                ? "FATX rebuild paused"
+                                : $"Rebuilding FATX image from JSON... {snapshot.Percent:0}%";
+                        });
+                    }
+                });
                 if (exitCode != 0)
                 {
+                    if (rebuildCancellation.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(rebuildCancellation.Token);
+                    }
+
                     throw new InvalidOperationException("FATX rebuild command failed. Check the selected JSON and source folders.");
                 }
-            });
+            }, rebuildCancellation.Token);
 
             ViewModel.StatusText = "Ready";
             await TextDialog.ShowAsync(this, "Rebuild FATX", $"Rebuilt FATX image:\n{outputPath}");
+        }
+        catch (OperationCanceledException)
+        {
+            ViewModel.StatusText = "Rebuild canceled";
+            await TextDialog.ShowAsync(this, "Rebuild FATX canceled", "Rebuild canceled by user.");
         }
         catch (Exception ex)
         {
             ViewModel.StatusText = "Rebuild failed";
             await TextDialog.ShowAsync(this, "Rebuild FATX failed", ex.Message);
+        }
+        finally
+        {
+            progressDialog.Close();
+            await progressDialogTask;
         }
     }
 
@@ -709,6 +757,102 @@ public sealed partial class MainWindow : Window
 }
 
 internal sealed record CustomPartitionRequest(string Name, long Offset, long Length);
+
+internal sealed class RebuildProgressDialog : Window
+{
+    private readonly ProgressBar _progressBar;
+    private readonly TextBlock _stageText;
+    private readonly TextBlock _detailText;
+    private readonly Button _pauseButton;
+    private bool _isPaused;
+
+    public RebuildProgressDialog()
+    {
+        Title = "FATX Rebuild Progress";
+        Width = 560;
+        Height = 220;
+        MinWidth = 500;
+        MinHeight = 200;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        CanResize = false;
+
+        _stageText = new TextBlock
+        {
+            Text = "Preparing rebuild...",
+            FontSize = 16,
+            FontWeight = global::Avalonia.Media.FontWeight.SemiBold
+        };
+        _detailText = new TextBlock
+        {
+            Margin = new global::Avalonia.Thickness(0, 8, 0, 0),
+            Foreground = global::Avalonia.Application.Current?.FindResource("MutedBrush") as global::Avalonia.Media.IBrush
+        };
+        _progressBar = new ProgressBar
+        {
+            Margin = new global::Avalonia.Thickness(0, 14, 0, 0),
+            Minimum = 0,
+            Maximum = 100,
+            Height = 14
+        };
+
+        _pauseButton = new Button { Content = "Pause", MinWidth = 96 };
+        _pauseButton.Click += (_, _) =>
+        {
+            _isPaused = !_isPaused;
+            _pauseButton.Content = _isPaused ? "Resume" : "Pause";
+            PauseChanged?.Invoke(this, _isPaused);
+        };
+
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 96 };
+        cancelButton.Click += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
+
+        Content = new Border
+        {
+            Padding = new global::Avalonia.Thickness(18),
+            Background = global::Avalonia.Application.Current?.FindResource("PanelBgBrush") as global::Avalonia.Media.IBrush,
+            Child = new Grid
+            {
+                RowDefinitions =
+                {
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto)
+                },
+                Children =
+                {
+                    _stageText,
+                    _detailText,
+                    _progressBar,
+                    new StackPanel
+                    {
+                        Orientation = global::Avalonia.Layout.Orientation.Horizontal,
+                        HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Right,
+                        Spacing = 8,
+                        Margin = new global::Avalonia.Thickness(0, 12, 0, 0),
+                        Children = { _pauseButton, cancelButton }
+                    }
+                }
+            }
+        };
+
+        var grid = (Grid)((Border)Content).Child!;
+        Grid.SetRow((Control)grid.Children[1], 1);
+        Grid.SetRow((Control)grid.Children[2], 2);
+        Grid.SetRow((Control)grid.Children[3], 3);
+    }
+
+    public event EventHandler? CancelRequested;
+
+    public event EventHandler<bool>? PauseChanged;
+
+    public void Update(int percent, string stage, string detail)
+    {
+        _progressBar.Value = Math.Clamp(percent, 0, 100);
+        _stageText.Text = $"{Math.Clamp(percent, 0, 100):0}% - {stage}";
+        _detailText.Text = detail;
+    }
+}
 
 internal sealed class TextDialog : Window
 {
