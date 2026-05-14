@@ -147,15 +147,10 @@ jobs:
           }
 
           @"
-          Portable Windows x64 build of Drive Assistant.
-
-          This release workflow also uploads Linux desktop and CLI tarballs for x64 and arm64 after the Windows package job completes.
+          Contains Windows, Linux, and CLI release builds of Drive Assistant.
 
           ## What Changed ($rangeLabel)
           $changes
-
-          SHA256:
-          ```${{ steps.package.outputs.sha256 }}```
           "@ | Set-Content -Path release-notes.md -Encoding UTF8
 
       - name: Publish GitHub release
