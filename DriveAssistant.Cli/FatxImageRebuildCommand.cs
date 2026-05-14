@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using FATX.FileSystem;

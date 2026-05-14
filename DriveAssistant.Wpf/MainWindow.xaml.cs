@@ -516,6 +516,94 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SaveProgressDatabase();
     }
 
+    private async void RebuildFatxImageIncludeDeleted_Click(object sender, RoutedEventArgs e)
+    {
+        await RebuildFatxImageFromJsonAsync(includeDeletedEntries: true);
+    }
+
+    private async void RebuildFatxImageExcludeDeleted_Click(object sender, RoutedEventArgs e)
+    {
+        await RebuildFatxImageFromJsonAsync(includeDeletedEntries: false);
+    }
+
+    private async Task RebuildFatxImageFromJsonAsync(bool includeDeletedEntries)
+    {
+        if (!HasLoadedImage || SelectedPartition == null)
+        {
+            StatusText = "Open an image and select a partition before rebuilding FATX from JSON.";
+            return;
+        }
+
+        var snapshotDialog = new OpenFileDialog
+        {
+            Filter = "Drive Assistant Database (*.json)|*.json|All files (*.*)|*.*",
+            CheckFileExists = true
+        };
+        if (snapshotDialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var liveDirectory = PickDestinationFolder("Select folder that contains non-deleted files");
+        if (string.IsNullOrWhiteSpace(liveDirectory))
+        {
+            return;
+        }
+
+        var deletedDirectory = PickDestinationFolder("Select folder that contains deleted files");
+        if (string.IsNullOrWhiteSpace(deletedDirectory))
+        {
+            return;
+        }
+
+        var outputDialog = new SaveFileDialog
+        {
+            Filter = "Raw image (*.img)|*.img|All files (*.*)|*.*",
+            FileName = $"{SelectedPartition.Name}-rebuilt.img"
+        };
+        if (outputDialog.ShowDialog(this) != true || string.IsNullOrWhiteSpace(outputDialog.FileName))
+        {
+            return;
+        }
+
+        StatusText = "Rebuilding FATX image from JSON...";
+        AppendLog($"FATX rebuild requested ({(includeDeletedEntries ? "include deleted" : "exclude deleted")}): {snapshotDialog.FileName}");
+
+        var args = new List<string>
+        {
+            snapshotDialog.FileName,
+            liveDirectory,
+            deletedDirectory,
+            outputDialog.FileName,
+            "--partition",
+            SelectedPartition.Name,
+            "--include-deleted",
+            includeDeletedEntries ? "true" : "false"
+        };
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray());
+                if (exitCode != 0)
+                {
+                    throw new InvalidOperationException("FATX rebuild command failed. Check the selected JSON and source folders.");
+                }
+            });
+
+            StatusText = "Ready";
+            AppendLog($"FATX rebuild complete: {outputDialog.FileName}");
+            MessageBox.Show(this, $"Rebuilt FATX image:\n{outputDialog.FileName}", AppName, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Failed";
+            AppendLog($"FATX rebuild failed: {ex.Message}");
+            MessageBox.Show(this, ex.Message, AppName, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async Task OpenImagePathAsync(string imagePath)
     {
         await OpenConsoleImagePathAsync(imagePath, ConsoleDriveImageKind.Auto, keyPath: null);

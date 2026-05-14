@@ -117,6 +117,9 @@
                                 <MenuItem x:Name="LoadDatabaseMenuItem" Header="Load Database..." Click="LoadDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
                                 <MenuItem x:Name="SaveDatabaseMenuItem" Header="Save Database..." Click="SaveDatabase_Click" IsEnabled="{Binding HasOpenDatabase}" />
                                 <Separator />
+                                <MenuItem Header="Rebuild FATX Image (Include Deleted)..." Click="RebuildFatxImageIncludeDeleted_Click" IsEnabled="{Binding HasOpenDatabase}" />
+                                <MenuItem Header="Rebuild FATX Image (Exclude Deleted)..." Click="RebuildFatxImageExcludeDeleted_Click" IsEnabled="{Binding HasOpenDatabase}" />
+                                <Separator />
                                 <MenuItem x:Name="SaveSelectedMenuItem" Header="Save Selected..." Click="SaveSelected_Click" IsEnabled="{Binding HasSelection}" />
                             </ContextMenu>
                         </Button.ContextMenu>

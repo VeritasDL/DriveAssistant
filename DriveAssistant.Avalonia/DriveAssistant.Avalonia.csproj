@@ -21,6 +21,7 @@
     <Compile Include="..\DriveAssistant.Shared\DiskTypes\ImgcDecoder.cs" Link="DiskTypes\ImgcDecoder.cs" />
     <Compile Include="..\DriveAssistant.Shared\Utilities\BuildInfo.cs" Link="Utilities\BuildInfo.cs" />
     <Compile Include="..\DriveAssistant.Shared\Utilities\CustomSignatureLoader.cs" Link="Utilities\CustomSignatureLoader.cs" />
+    <Compile Include="..\DriveAssistant.Cli\FatxImageRebuildCommand.cs" Link="Compatibility\FatxImageRebuildCommand.cs" />
     <Compile Include="..\DriveAssistant.Cli\AppLogger.cs" Link="Compatibility\AppLogger.cs" />
     <Compile Include="..\DriveAssistant.Cli\PartitionModel.cs" Link="Compatibility\PartitionModel.cs" />
     <Compile Include="..\DriveAssistant.Cli\ScanProfile.cs" Link="Compatibility\ScanProfile.cs" />

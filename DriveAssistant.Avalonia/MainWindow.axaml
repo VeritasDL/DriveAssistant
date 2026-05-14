@@ -82,6 +82,10 @@
                 <MenuItem Header="Open Image...        Ctrl+O" Click="OpenImage_Click" />
                 <MenuItem Header="Set Key Folder..." Click="SetKeyPath_Click" />
                 <MenuItem Header="Set Key File..." Click="SetKeyFile_Click" />
+                <Separator />
+                <MenuItem Header="Rebuild FATX Image (Include Deleted)..." Click="RebuildFatxImageIncludeDeleted_Click" />
+                <MenuItem Header="Rebuild FATX Image (Exclude Deleted)..." Click="RebuildFatxImageExcludeDeleted_Click" />
+                <Separator />
                 <MenuItem Header="Save Selected...     Ctrl+E" Click="SaveSelected_Click" IsEnabled="{Binding HasExportSelection}" />
               </MenuFlyout>
             </Button.Flyout>

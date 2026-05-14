@@ -8,6 +8,7 @@
     <Compile Include="..\DriveAssistant.Shared\DiskTypes\RawImage.cs" Link="DiskTypes\RawImage.cs" />
     <Compile Include="..\DriveAssistant.Shared\DiskTypes\CompressedImage.cs" Link="DiskTypes\CompressedImage.cs" />
     <Compile Include="..\DriveAssistant.Shared\DiskTypes\ImgcDecoder.cs" Link="DiskTypes\ImgcDecoder.cs" />
+    <Compile Include="..\DriveAssistant.Cli\FatxImageRebuildCommand.cs" Link="Compatibility\FatxImageRebuildCommand.cs" />
     <Compile Include="..\DriveAssistant.Shared\Utilities\BuildInfo.cs" Link="Utilities\BuildInfo.cs" />
     <Compile Include="..\DriveAssistant.Shared\Utilities\CustomSignatureLoader.cs" Link="Utilities\CustomSignatureLoader.cs" />
     <Compile Include="..\DriveAssistant.Shared\Database\DatabaseFile.cs" Link="Database\DatabaseFile.cs" />

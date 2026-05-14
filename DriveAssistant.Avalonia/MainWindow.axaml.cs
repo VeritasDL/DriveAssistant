@@ -7,6 +7,7 @@ using Avalonia.Platform.Storage;
 using DriveAssistant.Avalonia.Core;
 using DriveAssistant.Avalonia.ViewModels;
 using FATXTools.Utilities;
+using System.Globalization;
 
 namespace DriveAssistant.Avalonia;
 
@@ -132,6 +133,119 @@ public sealed partial class MainWindow : Window
         });
 
         ViewModel.KeyPath = files.FirstOrDefault()?.TryGetLocalPath();
+    }
+
+    private async void RebuildFatxImageIncludeDeleted_Click(object? sender, RoutedEventArgs e)
+    {
+        await RebuildFatxImageFromJsonAsync(includeDeletedEntries: true);
+    }
+
+    private async void RebuildFatxImageExcludeDeleted_Click(object? sender, RoutedEventArgs e)
+    {
+        await RebuildFatxImageFromJsonAsync(includeDeletedEntries: false);
+    }
+
+    private async Task RebuildFatxImageFromJsonAsync(bool includeDeletedEntries)
+    {
+        if (ViewModel.SelectedPartition == null)
+        {
+            await TextDialog.ShowAsync(this, "Rebuild FATX", "Open an image and select a partition before rebuilding FATX from JSON.");
+            return;
+        }
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null)
+        {
+            return;
+        }
+
+        var snapshotFiles = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select Drive Assistant database JSON",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Drive Assistant Database") { Patterns = ["*.json"] },
+                FilePickerFileTypes.All
+            ]
+        });
+        var snapshotPath = snapshotFiles.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(snapshotPath))
+        {
+            return;
+        }
+
+        var liveFolders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select folder that contains non-deleted files",
+            AllowMultiple = false
+        });
+        var liveDirectory = liveFolders.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(liveDirectory))
+        {
+            return;
+        }
+
+        var deletedFolders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select folder that contains deleted files",
+            AllowMultiple = false
+        });
+        var deletedDirectory = deletedFolders.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(deletedDirectory))
+        {
+            return;
+        }
+
+        var outputFile = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save rebuilt FATX image",
+            SuggestedFileName = $"partition-{ViewModel.SelectedPartition.Index}-rebuilt.img",
+            FileTypeChoices =
+            [
+                new FilePickerFileType("Raw image") { Patterns = ["*.img"] },
+                FilePickerFileTypes.All
+            ]
+        });
+        var outputPath = outputFile?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            return;
+        }
+
+        ViewModel.StatusText = "Rebuilding FATX image from JSON...";
+
+        var args = new List<string>
+        {
+            snapshotPath,
+            liveDirectory,
+            deletedDirectory,
+            outputPath,
+            "--partition",
+            ViewModel.SelectedPartition.Index.ToString(CultureInfo.InvariantCulture),
+            "--include-deleted",
+            includeDeletedEntries ? "true" : "false"
+        };
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var exitCode = DriveAssistant.Cli.FatxImageRebuildCommand.Run(args.ToArray());
+                if (exitCode != 0)
+                {
+                    throw new InvalidOperationException("FATX rebuild command failed. Check the selected JSON and source folders.");
+                }
+            });
+
+            ViewModel.StatusText = "Ready";
+            await TextDialog.ShowAsync(this, "Rebuild FATX", $"Rebuilt FATX image:\n{outputPath}");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusText = "Rebuild failed";
+            await TextDialog.ShowAsync(this, "Rebuild FATX failed", ex.Message);
+        }
     }
 
     private async void SaveSelected_Click(object? sender, RoutedEventArgs e)
