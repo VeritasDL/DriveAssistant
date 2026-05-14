@@ -1,16 +1,16 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Text.Json;
+using System.Threading;
 using FATX.Recovery.Models;
 using FATX.Recovery.Builders;
 
 namespace FATX.Recovery.Orchestrators
 {
     /// <summary>
-    /// Orchestrates the complete Xbox 360 HDD recovery process (Steps 0-3 plus file copying).
+    /// Orchestrates the complete Xbox 360 HDD recovery process.
     /// </summary>
     public class Xbox360HddRecoveryOrchestrator
     {
@@ -22,19 +22,8 @@ namespace FATX.Recovery.Orchestrators
         private long _fileAreaByteOffset;
         private Dictionary<string, uint>? _fileToFirstClusterMap;
 
-        /// <summary>
-        /// Event raised for status updates.
-        /// </summary>
         public event Action<string>? StatusChanged;
-
-        /// <summary>
-        /// Event raised for progress updates (0-100).
-        /// </summary>
         public event Action<int>? ProgressChanged;
-
-        /// <summary>
-        /// Event raised for log messages.
-        /// </summary>
         public event Action<string>? LogMessage;
 
         public Xbox360HddRecoveryOrchestrator(Xbox360HddRecoveryConfig config)
@@ -43,9 +32,6 @@ namespace FATX.Recovery.Orchestrators
             _config.Validate();
         }
 
-        /// <summary>
-        /// Executes the complete recovery pipeline.
-        /// </summary>
         public bool Execute(CancellationToken cancellationToken = default)
         {
             try
@@ -54,48 +40,41 @@ namespace FATX.Recovery.Orchestrators
                 Log($"Output: {_config.OutputImagePath}");
                 UpdateProgress(0);
 
-                // Step 0: Load configuration (already done via constructor)
                 UpdateStatus("Step 0/6: Configuration loaded");
                 Log($"✓ Recovered files: {_config.RecoveredFilesPath}");
                 Log($"✓ Deleted files: {_config.DeletedFilesPath}");
                 UpdateProgress(10);
 
-                // Step 1: Load and parse HDD JSON
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 1/6: Loading HDD metadata");
                 if (!LoadHddJson(cancellationToken))
                     return false;
                 UpdateProgress(20);
 
-                // Step 2: Initialize file matcher
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 2/6: Indexing recovery files");
                 if (!InitializeFileMatcher(cancellationToken))
                     return false;
                 UpdateProgress(30);
 
-                // Step 3: Create devkit superblock and image structure
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 3/6: Creating HDD image structure");
                 if (!CreateImageStructure(cancellationToken))
                     return false;
                 UpdateProgress(50);
 
-                // Step 4: Write directory entries (dirents)
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 4/6: Writing directory entries");
                 if (!WriteDirentStream(cancellationToken))
                     return false;
                 UpdateProgress(70);
 
-                // Step 5: Copy file contents
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 5/6: Copying file contents");
                 if (!CopyFileContents(cancellationToken))
                     return false;
                 UpdateProgress(85);
 
-                // Step 6: Finalize and verify
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateStatus("Step 6/6: Finalizing image");
                 if (!FinalizeImage(cancellationToken))
@@ -134,7 +113,7 @@ namespace FATX.Recovery.Orchestrators
                     return false;
                 }
 
-                Log($"✓ Loaded HDD metadata: {_hddData.Partitions?.Count ?? 0} partition(s)");
+                Log($"✓ Loaded HDD metadata: {_hddData.Partitions.Count} partition(s)");
                 return true;
             }
             catch (Exception ex)
@@ -150,7 +129,7 @@ namespace FATX.Recovery.Orchestrators
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _matcher = new FileRecoveryMatcher(_config.RecoveredFilesPath, _config.DeletedFilesPath, enableFuzzy: _config.EnableFuzzyMatching);
-                Log($"✓ File matcher initialized");
+                Log("✓ File matcher initialized");
                 return true;
             }
             catch (Exception ex)
@@ -175,11 +154,9 @@ namespace FATX.Recovery.Orchestrators
                 var partition = _hddData.Partitions[0];
                 var partitionSize = partition.Length;
 
-                // Calculate cluster size
                 _bytesPerCluster = HddStructureBuilders.CalculateBytesPerCluster(partitionSize);
                 Log($"✓ Calculated cluster size: {_bytesPerCluster} bytes");
 
-                // Create devkit superblock
                 var devkitHeader = HddStructureBuilders.CreateDevkitSuperblock(
                     partitionCount: 1,
                     partitionOffset: 0x10000,
@@ -187,7 +164,6 @@ namespace FATX.Recovery.Orchestrators
                 );
                 Log($"✓ Created devkit superblock ({devkitHeader.Length} bytes)");
 
-                // Create FATX partition header
                 var fatxHeader = HddStructureBuilders.CreateFatxPartitionHeader(
                     serialNumber: _config.SerialNumber != 0 ? _config.SerialNumber : (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     bytesPerCluster: _bytesPerCluster,
@@ -195,7 +171,6 @@ namespace FATX.Recovery.Orchestrators
                 );
                 Log($"✓ Created FATX partition header ({fatxHeader.Length} bytes)");
 
-                // Calculate offsets
                 var fatxHeaderSize = 0x1000;
                 var fatTableSize = (uint)((partitionSize / _bytesPerCluster) * sizeof(uint));
                 var fatTableSize_aligned = ((fatTableSize + 0xFFF) / 0x1000) * 0x1000;
@@ -204,12 +179,10 @@ namespace FATX.Recovery.Orchestrators
                 Log($"✓ FAT table size: {fatTableSize} bytes (aligned: {fatTableSize_aligned})");
                 Log($"✓ File area offset: 0x{_fileAreaByteOffset:X}");
 
-                // Initialize FAT table (will be filled during dirent writing)
                 var maxClusters = (uint)(partitionSize / _bytesPerCluster);
                 _fileAllocationTable = Enumerable.Repeat(0xFFFFFFFEu, (int)maxClusters).ToArray();
                 _fileToFirstClusterMap = new Dictionary<string, uint>();
 
-                // Write to image file
                 using (var fs = File.Create(_config.OutputImagePath))
                 {
                     fs.Write(devkitHeader, 0, devkitHeader.Length);
@@ -217,12 +190,10 @@ namespace FATX.Recovery.Orchestrators
                     fs.Write(fatxHeader, 0, fatxHeader.Length);
                     fs.Position = 0x10000 + fatxHeaderSize;
                     
-                    // Write FAT table
                     var fatBytes = new byte[fatTableSize_aligned];
                     Buffer.BlockCopy(_fileAllocationTable, 0, fatBytes, 0, (int)fatTableSize);
                     fs.Write(fatBytes, 0, fatBytes.Length);
 
-                    // Extend file to partition size
                     fs.SetLength(partitionSize);
                 }
 
@@ -253,7 +224,7 @@ namespace FATX.Recovery.Orchestrators
 
                 Log($"✓ Processing {entries.Count} file system entries");
 
-                uint nextCluster = 1; // Cluster 0 is reserved
+                uint nextCluster = 1;
                 var direntBuilder = new DirentBuilder();
                 var dirents = new List<byte[]>();
 
@@ -261,7 +232,7 @@ namespace FATX.Recovery.Orchestrators
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    if (_matcher?.TryFindFile(entry.Path ?? entry.Name) == true || !entry.IsDeleted)
+                    if (_matcher?.TryFindFile(entry.Path ?? entry.Name) != null || !entry.IsDeleted)
                     {
                         var dirent = direntBuilder.CreateDirent(
                             fileName: entry.Name,
@@ -278,13 +249,12 @@ namespace FATX.Recovery.Orchestrators
                             var clustersNeeded = (uint)((entry.Size + _bytesPerCluster - 1) / _bytesPerCluster);
                             _fileToFirstClusterMap![entry.Name] = nextCluster;
 
-                            // Build FAT chain for this file
                             for (uint i = 0; i < clustersNeeded; i++)
                             {
                                 if (nextCluster + i < _fileAllocationTable!.Length - 1)
                                     _fileAllocationTable[nextCluster + i] = nextCluster + i + 1;
                                 else if (nextCluster + i < _fileAllocationTable.Length)
-                                    _fileAllocationTable[nextCluster + i] = 0xFFFFFFF8; // End of chain
+                                    _fileAllocationTable[nextCluster + i] = 0xFFFFFFF8;
                             }
 
                             nextCluster += clustersNeeded;
@@ -296,7 +266,6 @@ namespace FATX.Recovery.Orchestrators
                     }
                     else if (_config.IncludeDeletedFiles)
                     {
-                        // Create placeholder dirent for missing file
                         var dirent = direntBuilder.CreateDirent(
                             fileName: entry.Name,
                             fileSize: Math.Max(0, entry.Size),
@@ -309,7 +278,6 @@ namespace FATX.Recovery.Orchestrators
                     }
                 }
 
-                // Write dirents to image
                 using (var fs = new FileStream(_config.OutputImagePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
                 {
                     var direntOffset = _fileAreaByteOffset;
@@ -321,7 +289,6 @@ namespace FATX.Recovery.Orchestrators
                     }
                 }
 
-                // Update FAT table in image
                 using (var fs = new FileStream(_config.OutputImagePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
                 {
                     fs.Seek(0x10000 + 0x1000, SeekOrigin.Begin);
@@ -435,19 +402,8 @@ namespace FATX.Recovery.Orchestrators
             return result;
         }
 
-        private void UpdateStatus(string status)
-        {
-            StatusChanged?.Invoke(status);
-        }
-
-        private void UpdateProgress(int percentage)
-        {
-            ProgressChanged?.Invoke(Math.Clamp(percentage, 0, 100));
-        }
-
-        private void Log(string message)
-        {
-            LogMessage?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
-        }
+        private void UpdateStatus(string status) => StatusChanged?.Invoke(status);
+        private void UpdateProgress(int percentage) => ProgressChanged?.Invoke(Math.Clamp(percentage, 0, 100));
+        private void Log(string message) => LogMessage?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
     }
 }

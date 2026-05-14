@@ -1,8 +1,7 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
-using System.Linq;
 
 namespace FATX.Recovery.Builders
 {
@@ -17,14 +16,7 @@ namespace FATX.Recovery.Builders
         private readonly long _fileAreaByteOffset;
         private readonly uint[] _fileAllocationTable;
 
-        /// <summary>
-        /// Event raised when file copy progress is updated.
-        /// </summary>
         public event Action<string, long, long>? FileCopyProgress;
-
-        /// <summary>
-        /// Event raised when a file copy fails.
-        /// </summary>
         public event Action<string, Exception>? FileCopyFailed;
 
         public FileContentCopier(string imagePath, uint bytesPerCluster, long fileAreaByteOffset, uint[] fileAllocationTable)
@@ -35,9 +27,6 @@ namespace FATX.Recovery.Builders
             _fileAllocationTable = fileAllocationTable;
         }
 
-        /// <summary>
-        /// Copies a file from the source path to the allocated clusters in the image.
-        /// </summary>
         public bool TryCopyFile(string sourceFilePath, uint firstCluster, long fileSize, CancellationToken cancellationToken = default)
         {
             try
@@ -55,10 +44,9 @@ namespace FATX.Recovery.Builders
                     return false;
                 }
 
-                using var sourceStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.SequentialScan);
-                using var imageStream = new FileStream(_imagePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite, BufferSize, FileOptions.RandomAccess);
+                using var sourceStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize);
+                using var imageStream = new FileStream(_imagePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite, BufferSize);
 
-                // Get cluster chain from FAT
                 var clusterChain = GetClusterChain(firstCluster);
                 if (clusterChain.Count == 0)
                 {
@@ -79,12 +67,10 @@ namespace FATX.Recovery.Builders
                     var clusterOffset = _fileAreaByteOffset + (long)cluster * _bytesPerCluster;
                     var bytesInCluster = Math.Min((long)_bytesPerCluster, remaining);
 
-                    // Read from source
                     int bytesRead = sourceStream.Read(buffer, 0, (int)bytesInCluster);
                     if (bytesRead == 0)
                         break;
 
-                    // Write to image
                     imageStream.Seek(clusterOffset, SeekOrigin.Begin);
                     imageStream.Write(buffer, 0, bytesRead);
 
@@ -93,7 +79,6 @@ namespace FATX.Recovery.Builders
                     clusterIndex++;
                 }
 
-                // If file was smaller than allocated space, zero-fill remaining clusters
                 if (remaining > 0)
                 {
                     var zeroBuffer = new byte[BufferSize];
@@ -127,15 +112,12 @@ namespace FATX.Recovery.Builders
             }
         }
 
-        /// <summary>
-        /// Builds the cluster chain by following the FAT.
-        /// </summary>
         private List<uint> GetClusterChain(uint startCluster)
         {
             var chain = new List<uint>();
             var current = startCluster;
             const uint EndOfChainMarker = 0xFFFFFFF8;
-            const int MaxChainLength = 1000000; // Prevent infinite loops
+            const int MaxChainLength = 1000000;
 
             while (current < EndOfChainMarker && chain.Count < MaxChainLength)
             {
