@@ -528,12 +528,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task RebuildFatxImageFromJsonAsync(bool includeDeletedEntries)
     {
-        if (!HasLoadedImage || SelectedPartition == null)
-        {
-            StatusText = "Open an image and select a partition before rebuilding FATX from JSON.";
-            return;
-        }
-
         var snapshotDialog = new OpenFileDialog
         {
             Filter = "Drive Assistant Database (*.json)|*.json|All files (*.*)|*.*",
@@ -544,22 +538,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var liveDirectory = PickDestinationFolder("Select folder that contains non-deleted files");
-        if (string.IsNullOrWhiteSpace(liveDirectory))
+        string liveDirectory = string.Empty;
+        var includeLiveFolder = MessageBox.Show(
+            this,
+            "Do you want to include a folder with non-deleted files?\nChoose 'No' to build a JSON-only skeleton image.",
+            AppName,
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question);
+        if (includeLiveFolder == MessageBoxResult.Cancel)
         {
             return;
         }
 
-        var deletedDirectory = PickDestinationFolder("Select folder that contains deleted files");
-        if (string.IsNullOrWhiteSpace(deletedDirectory))
+        if (includeLiveFolder == MessageBoxResult.Yes)
+        {
+            liveDirectory = PickDestinationFolder("Select folder that contains non-deleted files") ?? string.Empty;
+        }
+
+        string deletedDirectory = string.Empty;
+        var includeDeletedFolder = MessageBox.Show(
+            this,
+            "Do you want to include a folder with deleted files?\nChoose 'No' to skip deleted-source files.",
+            AppName,
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question);
+        if (includeDeletedFolder == MessageBoxResult.Cancel)
         {
             return;
         }
 
+        if (includeDeletedFolder == MessageBoxResult.Yes)
+        {
+            deletedDirectory = PickDestinationFolder("Select folder that contains deleted files") ?? string.Empty;
+        }
+
+        var suggestedName = !string.IsNullOrWhiteSpace(SelectedPartition?.Name)
+            ? $"{SelectedPartition.Name}-rebuilt.img"
+            : "rebuilt-fatx.img";
         var outputDialog = new SaveFileDialog
         {
             Filter = "Raw image (*.img)|*.img|All files (*.*)|*.*",
-            FileName = $"{SelectedPartition.Name}-rebuilt.img"
+            FileName = suggestedName
         };
         if (outputDialog.ShowDialog(this) != true || string.IsNullOrWhiteSpace(outputDialog.FileName))
         {
@@ -571,15 +590,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var args = new List<string>
         {
-            snapshotDialog.FileName,
-            liveDirectory,
-            deletedDirectory,
+            "--output",
             outputDialog.FileName,
-            "--partition",
-            SelectedPartition.Name,
             "--include-deleted",
-            includeDeletedEntries ? "true" : "false"
+            includeDeletedEntries ? "true" : "false",
+            snapshotDialog.FileName
         };
+
+        if (!string.IsNullOrWhiteSpace(liveDirectory))
+        {
+            args.Add("--live-files");
+            args.Add(liveDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(deletedDirectory))
+        {
+            args.Add("--deleted-files");
+            args.Add(deletedDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedPartition?.Name))
+        {
+            args.Add("--partition");
+            args.Add(SelectedPartition.Name);
+        }
 
         try
         {

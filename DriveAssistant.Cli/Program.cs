@@ -287,14 +287,15 @@ Usage:
   drive-assistant info <image> [--key <path>]
   drive-assistant list <image> [--partition <index>] [--recursive] [--key <path>]
   drive-assistant export <image> <entry-path> <output-path> [--partition <index>] [--key <path>]
-  drive-assistant rebuild-fatx [<snapshot.json> <live-files-dir> <deleted-files-dir> <output.img>] [--partition <name-or-index>] [--serial <hex>] [--include-deleted <true|false>]
+  drive-assistant rebuild-fatx [<snapshot.json> [<live-files-dir> <deleted-files-dir>] <output.img>] [--output <path>] [--live-files <dir>] [--deleted-files <dir>] [--partition <name-or-index>] [--serial <hex>] [--include-deleted <true|false>]
   drive-assistant version
 
 Examples:
   drive-assistant info ./disk.img
   drive-assistant list ./psp-nand.bin --partition 0 --recursive
   drive-assistant export ./disk.img /Content/save.bin ./save.bin --partition 1
-  drive-assistant rebuild-fatx ./db.json ./live ./deleted ./rebuilt.img --partition Partition1 --include-deleted false
+  drive-assistant rebuild-fatx ./db.json ./rebuilt.img --include-deleted false
+  drive-assistant rebuild-fatx ./db.json --live-files ./live --deleted-files ./deleted --output ./rebuilt.img --partition Partition1
 
 `info`, `list`, and `export` are read-only against source images. `rebuild-fatx` creates a new image from snapshot metadata plus supplied source files.
 """);

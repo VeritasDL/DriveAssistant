@@ -147,12 +147,6 @@ public sealed partial class MainWindow : Window
 
     private async Task RebuildFatxImageFromJsonAsync(bool includeDeletedEntries)
     {
-        if (ViewModel.SelectedPartition == null)
-        {
-            await TextDialog.ShowAsync(this, "Rebuild FATX", "Open an image and select a partition before rebuilding FATX from JSON.");
-            return;
-        }
-
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel == null)
         {
@@ -177,30 +171,25 @@ public sealed partial class MainWindow : Window
 
         var liveFolders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Select folder that contains non-deleted files",
+            Title = "Optional: select folder with non-deleted files (cancel to skip)",
             AllowMultiple = false
         });
-        var liveDirectory = liveFolders.FirstOrDefault()?.TryGetLocalPath();
-        if (string.IsNullOrWhiteSpace(liveDirectory))
-        {
-            return;
-        }
+        var liveDirectory = liveFolders.FirstOrDefault()?.TryGetLocalPath() ?? string.Empty;
 
         var deletedFolders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Select folder that contains deleted files",
+            Title = "Optional: select folder with deleted files (cancel to skip)",
             AllowMultiple = false
         });
-        var deletedDirectory = deletedFolders.FirstOrDefault()?.TryGetLocalPath();
-        if (string.IsNullOrWhiteSpace(deletedDirectory))
-        {
-            return;
-        }
+        var deletedDirectory = deletedFolders.FirstOrDefault()?.TryGetLocalPath() ?? string.Empty;
 
+        var suggestedName = ViewModel.SelectedPartition != null
+            ? $"partition-{ViewModel.SelectedPartition.Index}-rebuilt.img"
+            : "rebuilt-fatx.img";
         var outputFile = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Save rebuilt FATX image",
-            SuggestedFileName = $"partition-{ViewModel.SelectedPartition.Index}-rebuilt.img",
+            SuggestedFileName = suggestedName,
             FileTypeChoices =
             [
                 new FilePickerFileType("Raw image") { Patterns = ["*.img"] },
@@ -217,15 +206,30 @@ public sealed partial class MainWindow : Window
 
         var args = new List<string>
         {
-            snapshotPath,
-            liveDirectory,
-            deletedDirectory,
+            "--output",
             outputPath,
-            "--partition",
-            ViewModel.SelectedPartition.Index.ToString(CultureInfo.InvariantCulture),
             "--include-deleted",
-            includeDeletedEntries ? "true" : "false"
+            includeDeletedEntries ? "true" : "false",
+            snapshotPath
         };
+
+        if (!string.IsNullOrWhiteSpace(liveDirectory))
+        {
+            args.Add("--live-files");
+            args.Add(liveDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(deletedDirectory))
+        {
+            args.Add("--deleted-files");
+            args.Add(deletedDirectory);
+        }
+
+        if (ViewModel.SelectedPartition != null)
+        {
+            args.Add("--partition");
+            args.Add(ViewModel.SelectedPartition.Index.ToString(CultureInfo.InvariantCulture));
+        }
 
         try
         {

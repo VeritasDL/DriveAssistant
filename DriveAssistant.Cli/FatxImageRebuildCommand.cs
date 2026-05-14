@@ -27,13 +27,13 @@ internal static class FatxImageRebuildCommand
             return Error;
         }
 
-        if (!Directory.Exists(options.LiveFilesDirectory))
+        if (!string.IsNullOrWhiteSpace(options.LiveFilesDirectory) && !Directory.Exists(options.LiveFilesDirectory))
         {
             Console.Error.WriteLine($"error: Live-files directory was not found: {options.LiveFilesDirectory}");
             return Error;
         }
 
-        if (!Directory.Exists(options.DeletedFilesDirectory))
+        if (!string.IsNullOrWhiteSpace(options.DeletedFilesDirectory) && !Directory.Exists(options.DeletedFilesDirectory))
         {
             Console.Error.WriteLine($"error: Deleted-files directory was not found: {options.DeletedFilesDirectory}");
             return Error;
@@ -49,12 +49,6 @@ internal static class FatxImageRebuildCommand
 
         var sourceIndex = SourceIndex.Build(options.LiveFilesDirectory, options.DeletedFilesDirectory);
         var nodes = BuildIncludedTree(partition.OriginalFilesystem, parentPath: string.Empty, partition.Name, sourceIndex, options.IncludeDeletedEntries);
-        if (nodes.Count == 0)
-        {
-            Console.Error.WriteLine("error: No matching files were found in the provided live/deleted folders.");
-            return Error;
-        }
-
         var outputPath = Path.GetFullPath(options.OutputImagePath);
         var parent = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrWhiteSpace(parent))
@@ -79,6 +73,7 @@ internal static class FatxImageRebuildCommand
         Console.WriteLine($"  Partition:  {partition.Name} (offset 0x{partition.Offset:X}, length 0x{partition.Length:X})");
         Console.WriteLine($"  Output:     {outputPath}");
         Console.WriteLine($"  Deleted:    {(options.IncludeDeletedEntries ? "included" : "excluded")}");
+        Console.WriteLine($"  Sources:    {(string.IsNullOrWhiteSpace(options.LiveFilesDirectory) && string.IsNullOrWhiteSpace(options.DeletedFilesDirectory) ? "metadata-only skeleton (no source folders)" : "snapshot + source folders")}");
         Console.WriteLine($"  Recreated:  {stats.DirectoriesWritten:N0} directories, {stats.FilesWritten:N0} files");
         Console.WriteLine($"  Skipped:    {stats.SkippedEntries:N0} entries not found in source folders");
         Console.WriteLine($"  FAT format: {(stats.IsFat16 ? "FAT16" : "FAT32")} ({stats.MaxUsableCluster:N0} usable clusters)");
@@ -794,24 +789,9 @@ internal static class FatxImageRebuildCommand
             return fatxPartitions[0];
         }
 
-        Console.WriteLine("Multiple FATX partitions found. Pick one:");
-        for (var index = 0; index < fatxPartitions.Count; index++)
-        {
-            var partition = fatxPartitions[index];
-            Console.WriteLine($"  [{index}] {partition.Name} (offset 0x{partition.Offset:X}, length 0x{partition.Length:X})");
-        }
-
-        while (true)
-        {
-            Console.Write("Partition index: ");
-            var input = Console.ReadLine();
-            if (int.TryParse(input, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) &&
-                index >= 0 &&
-                index < fatxPartitions.Count)
-            {
-                return fatxPartitions[index];
-            }
-        }
+        var first = fatxPartitions[0];
+        Console.WriteLine($"Multiple FATX partitions found; defaulting to first partition: {first.Name} (offset 0x{first.Offset:X}, length 0x{first.Length:X}).");
+        return first;
     }
 
     private static RebuildSnapshot LoadSnapshot(string path)
@@ -1018,16 +998,6 @@ internal static class FatxImageRebuildCommand
             options.SnapshotPath = Prompt("Snapshot JSON path");
         }
 
-        if (string.IsNullOrWhiteSpace(options.LiveFilesDirectory))
-        {
-            options.LiveFilesDirectory = Prompt("Folder with non-deleted files");
-        }
-
-        if (string.IsNullOrWhiteSpace(options.DeletedFilesDirectory))
-        {
-            options.DeletedFilesDirectory = Prompt("Folder with deleted files");
-        }
-
         if (string.IsNullOrWhiteSpace(options.OutputImagePath))
         {
             options.OutputImagePath = Prompt("Output .img path");
@@ -1168,6 +1138,11 @@ internal static class FatxImageRebuildCommand
 
         private static Dictionary<string, string> BuildFileIndex(string root)
         {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
@@ -1184,6 +1159,11 @@ internal static class FatxImageRebuildCommand
         private static HashSet<string> BuildDirectoryIndex(string root)
         {
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { string.Empty };
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                return set;
+            }
+
             foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
             {
                 set.Add(NormalizePath(Path.GetRelativePath(root, directory)));
@@ -1402,6 +1382,16 @@ internal static class FatxImageRebuildCommand
                 var arg = args[index];
                 switch (arg)
                 {
+                    case "--output":
+                    case "-o":
+                        options.OutputImagePath = RequireValue(args, ref index, arg);
+                        break;
+                    case "--live-files":
+                        options.LiveFilesDirectory = RequireValue(args, ref index, arg);
+                        break;
+                    case "--deleted-files":
+                        options.DeletedFilesDirectory = RequireValue(args, ref index, arg);
+                        break;
                     case "--partition":
                     case "-p":
                         options.PartitionSelector = RequireValue(args, ref index, arg);
@@ -1440,22 +1430,26 @@ internal static class FatxImageRebuildCommand
                 }
             }
 
-            if (positionals.Count > 0)
+            if (positionals.Count > 0 && string.IsNullOrWhiteSpace(options.SnapshotPath))
             {
                 options.SnapshotPath = positionals[0];
             }
 
-            if (positionals.Count > 1)
+            if (positionals.Count == 2 && string.IsNullOrWhiteSpace(options.OutputImagePath))
+            {
+                options.OutputImagePath = positionals[1];
+            }
+            else if (positionals.Count > 1 && string.IsNullOrWhiteSpace(options.LiveFilesDirectory))
             {
                 options.LiveFilesDirectory = positionals[1];
             }
 
-            if (positionals.Count > 2)
+            if (positionals.Count > 2 && string.IsNullOrWhiteSpace(options.DeletedFilesDirectory))
             {
                 options.DeletedFilesDirectory = positionals[2];
             }
 
-            if (positionals.Count > 3)
+            if (positionals.Count > 3 && string.IsNullOrWhiteSpace(options.OutputImagePath))
             {
                 options.OutputImagePath = positionals[3];
             }
